@@ -9,8 +9,12 @@ import org.cobalt.api.event.annotation.SubscribeEvent
 import org.cobalt.api.event.impl.client.TickEvent
 import org.cobalt.api.event.impl.render.WorldRenderEvent
 import org.cobalt.api.pathfinder.pathfinder.AStarPathfinder
-import org.cobalt.api.pathfinder.pathing.NeighborStrategies
 import org.cobalt.api.pathfinder.pathing.configuration.PathfinderConfiguration
+import org.cobalt.api.pathfinder.pathing.heuristic.HeuristicWeights
+import org.cobalt.api.pathfinder.pathing.heuristic.LinearHeuristicStrategy
+import org.cobalt.api.pathfinder.pathing.minecraft.MinecraftParkourNeighborStrategy
+import org.cobalt.api.pathfinder.pathing.processing.impl.AvoidanceProcessor
+import org.cobalt.api.pathfinder.pathing.processing.impl.MinecraftParkourProcessor
 import org.cobalt.api.pathfinder.pathing.processing.impl.MinecraftPathProcessor
 import org.cobalt.api.pathfinder.pathing.result.Path
 import org.cobalt.api.pathfinder.pathing.result.PathState
@@ -39,15 +43,16 @@ object PathExecutor {
     val start = PathPosition(player.x, player.y, player.z)
     val target = PathPosition(x, y, z)
 
-    val processor = MinecraftPathProcessor()
     val config =
       PathfinderConfiguration(
         provider = MinecraftNavigationProvider(),
         // as of now max iterations is 20,000 but maybe wanna higher
         maxIterations = 20000,
         async = true,
-        neighborStrategy = NeighborStrategies.HORIZONTAL_DIAGONAL_AND_VERTICAL,
-        processors = listOf(processor)
+        neighborStrategy = MinecraftParkourNeighborStrategy,
+        heuristicWeights = HeuristicWeights(1.0, 0.0, 0.0, 0.5),
+        heuristicStrategy = LinearHeuristicStrategy(),
+        processors = listOf(AvoidanceProcessor(), MinecraftParkourProcessor(), MinecraftPathProcessor())
       )
 
     val pathfinder = AStarPathfinder(config)

@@ -12,13 +12,16 @@ import org.cobalt.api.util.TickScheduler
 import org.cobalt.internal.command.MainCommand
 import org.cobalt.internal.helper.Config
 import org.cobalt.internal.loader.AddonLoader
+import org.cobalt.internal.grotto.GrottoModule
+import org.cobalt.internal.mining.MiningModule
+import org.cobalt.internal.pathfinding.PathfindingModule
 
 @Suppress("UNUSED")
 object Cobalt : ClientModInitializer {
 
 
   override fun onInitializeClient() {
-    ModuleManager.addModules(listOf(WatermarkModule(), WatermarkModule()))
+    ModuleManager.addModules(listOf(WatermarkModule(), GrottoModule, MiningModule, PathfindingModule))
 
     AddonLoader.getAddons().map { it.second }.forEach {
       it.onLoad()

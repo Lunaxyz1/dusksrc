@@ -163,6 +163,7 @@ internal class UIHudList : UIPanel(
     private val baseHeight = 60F
     private val settings = module.getSettings().map {
       when (it) {
+        is ActionSetting -> UIActionSetting(it)
         is CheckboxSetting -> UICheckboxSetting(it)
         is ColorSetting -> UIColorSetting(it)
         is InfoSetting -> UIInfoSetting(it)

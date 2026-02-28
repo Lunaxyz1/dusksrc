@@ -58,7 +58,7 @@ internal class UIAddonEntry(
   }
 
   override fun mouseClicked(button: Int): Boolean {
-    if (isHoveringOver(x, y, width, height) && button == 1) {
+    if (isHoveringOver(x, y, width, height) && (button == 0 || button == 1)) {
       UIConfig.swapBodyPanel(UIModuleList(metadata, addon))
       return true
     }

@@ -1,5 +1,6 @@
 package org.cobalt.api.pathfinder.provider.impl
 
+import java.util.concurrent.ConcurrentHashMap
 import net.minecraft.client.Minecraft
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction.Axis
@@ -18,6 +19,11 @@ import org.cobalt.api.pathfinder.wrapper.PathPosition
 class MinecraftNavigationProvider : NavigationPointProvider {
 
   private val mc: Minecraft = Minecraft.getInstance()
+  private val cache = ConcurrentHashMap<Long, NavigationPoint>(8192)
+
+  companion object {
+    private const val MAX_CACHE_SIZE = 50000
+  }
 
   override fun getNavigationPoint(
     position: PathPosition,
@@ -37,6 +43,8 @@ class MinecraftNavigationProvider : NavigationPointProvider {
     val y = position.flooredY
     val z = position.flooredZ
     val blockPos = BlockPos(x, y, z)
+    val key = blockPos.asLong()
+    cache[key]?.let { return it }
 
     val feetState = level.getBlockState(blockPos)
     val headState = level.getBlockState(blockPos.above())
@@ -49,17 +57,23 @@ class MinecraftNavigationProvider : NavigationPointProvider {
     val isClimbingVal = feetState.block is LadderBlock || feetState.block is VineBlock
     val isLiquidVal = !feetState.fluidState.isEmpty
 
-    return object : NavigationPoint {
+    val point = object : NavigationPoint {
       override fun isTraversable(): Boolean = canPassFeetVal && canPassHeadVal
       override fun hasFloor(): Boolean = hasStableFloorVal
       override fun getFloorLevel(): Double = floorLevelVal
       override fun isClimbable(): Boolean = isClimbingVal
       override fun isLiquid(): Boolean = isLiquidVal
     }
+    if (cache.size > MAX_CACHE_SIZE) {
+      cache.clear()
+    }
+    cache[key] = point
+    return point
   }
 
   private fun canWalkThrough(level: Level, state: BlockState, pos: BlockPos): Boolean {
     if (state.isAir) return true
+    if (!state.fluidState.isEmpty) return false
 
     if (state.`is`(BlockTags.TRAPDOORS) ||
       state.`is`(Blocks.LILY_PAD) ||

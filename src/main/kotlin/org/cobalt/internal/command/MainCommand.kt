@@ -5,11 +5,11 @@ import org.cobalt.api.command.Command
 import org.cobalt.api.command.annotation.DefaultHandler
 import org.cobalt.api.command.annotation.SubCommand
 import org.cobalt.api.notification.NotificationManager
-import org.cobalt.api.pathfinder.PathExecutor
 import org.cobalt.api.rotation.EasingType
 import org.cobalt.api.rotation.RotationExecutor
 import org.cobalt.api.rotation.strategy.TimedEaseStrategy
 import org.cobalt.api.util.helper.Rotation
+import org.cobalt.internal.pathfinding.PathfindingModule
 import org.cobalt.internal.ui.screen.UIConfig
 
 internal object MainCommand : Command(name = "cobalt", aliases = arrayOf("cb")) {
@@ -48,12 +48,32 @@ internal object MainCommand : Command(name = "cobalt", aliases = arrayOf("cb")) 
 
   @SubCommand
   fun start(x: Double, y: Double, z: Double) {
-    PathExecutor.start(x, y, z)
+    PathfindingModule.startTo(x, y, z)
   }
 
   @SubCommand
   fun stop() {
-    PathExecutor.stop()
+    PathfindingModule.stopPath()
+  }
+
+  @SubCommand
+  fun pathstart() {
+    PathfindingModule.startFromSettings()
+  }
+
+  @SubCommand
+  fun pathstop() {
+    PathfindingModule.stopPath()
+  }
+
+  @SubCommand
+  fun setpos(x: Double, y: Double, z: Double) {
+    PathfindingModule.setTargetOnly(x, y, z)
+  }
+
+  @SubCommand
+  fun setposhere() {
+    PathfindingModule.setTargetAtPlayer()
   }
 
   @SubCommand

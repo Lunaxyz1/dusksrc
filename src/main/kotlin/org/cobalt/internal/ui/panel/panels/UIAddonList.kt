@@ -1,5 +1,9 @@
 package org.cobalt.internal.ui.panel.panels
 
+import net.fabricmc.loader.api.FabricLoader
+import org.cobalt.api.addon.Addon
+import org.cobalt.api.addon.AddonMetadata
+import org.cobalt.api.module.ModuleManager
 import org.cobalt.api.ui.theme.ThemeManager
 import org.cobalt.api.util.ui.NVGRenderer
 import org.cobalt.internal.loader.AddonLoader
@@ -19,7 +23,7 @@ internal class UIAddonList : UIPanel(
 ) {
 
   private val topBar = UITopbar("Addons")
-  private val allEntries = AddonLoader.getAddons().map { UIAddonEntry(it.first, it.second) }
+  private val allEntries = buildAddonEntries()
   private var entries = allEntries
 
   private val gridLayout = GridLayout(
@@ -71,6 +75,41 @@ internal class UIAddonList : UIPanel(
     }
 
     return false
+  }
+
+  private fun buildAddonEntries(): List<UIAddonEntry> {
+    val entries = mutableListOf<UIAddonEntry>()
+    entries.addAll(AddonLoader.getAddons().map { UIAddonEntry(it.first, it.second) })
+
+    val addonModules = AddonLoader.getAddons().flatMap { it.second.getModules() }.toSet()
+    val builtinModules = ModuleManager.getModules().filter { it !in addonModules }
+
+    if (builtinModules.isNotEmpty()) {
+      val version = FabricLoader.getInstance()
+        .getModContainer("cobalt")
+        .map { it.metadata.version.friendlyString }
+        .orElse("builtin")
+
+      val builtinMetadata = AddonMetadata(
+        id = "cobalt",
+        name = "Cobalt",
+        version = version,
+        entrypoints = emptyList(),
+        mixins = emptyList()
+      )
+
+      val builtinAddon = object : Addon() {
+        override fun onLoad() {}
+
+        override fun onUnload() {}
+
+        override fun getModules() = builtinModules
+      }
+
+      entries.add(0, UIAddonEntry(builtinMetadata, builtinAddon))
+    }
+
+    return entries
   }
 
 }

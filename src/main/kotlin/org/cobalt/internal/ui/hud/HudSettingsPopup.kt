@@ -51,6 +51,7 @@ internal class HudSettingsPopup {
 
     settingComponents = module.getSettings().map {
       when (it) {
+        is ActionSetting -> UIActionSetting(it)
         is CheckboxSetting -> UICheckboxSetting(it)
         is ColorSetting -> UIColorSetting(it)
         is InfoSetting -> UIInfoSetting(it)
