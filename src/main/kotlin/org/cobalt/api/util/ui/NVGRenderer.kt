@@ -281,6 +281,25 @@ object NVGRenderer {
   }
 
   @JvmStatic
+  fun textGradient(
+    text: String,
+    x: Float,
+    y: Float,
+    size: Float,
+    color1: Int,
+    color2: Int,
+    gradient: Gradient = Gradient.LeftToRight,
+    font: Font = interFont,
+  ) {
+    nvgFontSize(vg, size)
+    nvgFontFaceId(vg, getFontID(font))
+    val textWidth = textWidth(text, size, font)
+    gradient(color1, color2, x, y, textWidth, size, gradient)
+    nvgFillPaint(vg, nvgPaint)
+    nvgText(vg, x, y + .5f, text)
+  }
+
+  @JvmStatic
   fun textShadow(text: String, x: Float, y: Float, size: Float, color: Int, font: Font = interFont) {
     nvgFontFaceId(vg, getFontID(font))
     nvgFontSize(vg, size)

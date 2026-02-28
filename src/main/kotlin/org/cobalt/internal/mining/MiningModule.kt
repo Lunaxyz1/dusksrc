@@ -27,7 +27,6 @@ import org.cobalt.api.module.setting.impl.SliderSetting
 import org.cobalt.api.module.setting.impl.TextSetting
 import org.cobalt.api.notification.NotificationManager
 import org.cobalt.api.util.getLoreLines
-import org.cobalt.internal.grotto.GrottoIntegration
 
 private val MINING_BLOCK_HARDNESS = linkedMapOf(
   "Custom" to null,
@@ -218,42 +217,6 @@ object MiningModule : Module("Mining") {
     false
   )
 
-  val grottoEnabled = CheckboxSetting(
-    "Grotto Enabled",
-    "Enable Fairy Grotto routes and commands.",
-    true
-  )
-
-  val grottoRenderRoutes = CheckboxSetting(
-    "Grotto Render Routes",
-    "Render route lines in-world.",
-    true
-  )
-
-  val grottoRouteObstructionHighlights = CheckboxSetting(
-    "Grotto Route Obstructions",
-    "Highlight obstructing blocks along the current route.",
-    true
-  )
-
-  val grottoScannerEnabled = CheckboxSetting(
-    "Grotto Scanner",
-    "Scan for magenta grotto blocks in the Crystal Hollows.",
-    false
-  )
-
-  val grottoScannerRenderBoxes = CheckboxSetting(
-    "Grotto Scanner Boxes",
-    "Render ESP boxes on detected grotto blocks.",
-    true
-  )
-
-  val grottoScannerRenderTracers = CheckboxSetting(
-    "Grotto Scanner Tracers",
-    "Render tracers to detected grotto blocks.",
-    true
-  )
-
   val pingText = TextSetting(
     "Ping",
     "Current ping (ms).",
@@ -352,21 +315,12 @@ object MiningModule : Module("Mining") {
       frontLoadedActive,
       skymallActive,
       miningUmberTungsten,
-      grottoEnabled,
-      grottoRenderRoutes,
-      grottoRouteObstructionHighlights,
-      grottoScannerEnabled,
-      grottoScannerRenderBoxes,
-      grottoScannerRenderTracers,
       pingText,
       lookTicksText,
       scrapeStats,
       scrapeHotm,
-      openStats,
-      openHotm,
       exportHotm,
     )
-    GrottoIntegration.init()
     EventBus.register(this)
   }
 

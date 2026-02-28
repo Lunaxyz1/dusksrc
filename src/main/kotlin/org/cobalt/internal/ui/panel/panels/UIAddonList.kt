@@ -8,6 +8,7 @@ import org.cobalt.api.ui.theme.ThemeManager
 import org.cobalt.api.util.ui.NVGRenderer
 import org.cobalt.internal.loader.AddonLoader
 import org.cobalt.internal.mining.MiningModule
+import org.cobalt.internal.mining.FairyModule
 import org.cobalt.internal.ui.UIComponent
 import org.cobalt.internal.ui.components.UIAddonEntry
 import org.cobalt.internal.ui.components.UITopbar
@@ -84,7 +85,13 @@ internal class UIAddonList : UIPanel(
 
     val addonModules = AddonLoader.getAddons().flatMap { it.second.getModules() }.toSet()
     val builtinModules = ModuleManager.getModules().filter { it !in addonModules }
-    val miningModules = builtinModules.filter { it == MiningModule || it.name.equals("Mining", ignoreCase = true) }
+    val miningModules =
+      builtinModules.filter {
+        it == MiningModule ||
+          it == FairyModule ||
+          it.name.equals("Mining", ignoreCase = true) ||
+          it.name.equals("Fairy", ignoreCase = true)
+      }
     val remainingBuiltinModules = builtinModules.filter { it !in miningModules }
 
     val version = FabricLoader.getInstance()

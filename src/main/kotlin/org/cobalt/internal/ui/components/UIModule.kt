@@ -4,6 +4,7 @@ import org.cobalt.api.module.Module
 import org.cobalt.api.module.setting.Setting
 import org.cobalt.api.ui.theme.ThemeManager
 import org.cobalt.api.util.ui.NVGRenderer
+import org.cobalt.api.util.ui.helper.Gradient
 import org.cobalt.internal.ui.UIComponent
 import org.cobalt.internal.ui.animation.ColorAnimation
 import org.cobalt.internal.ui.animation.EaseOutAnimation
@@ -39,10 +40,22 @@ internal class UIModule(
       )
     }
 
-    NVGRenderer.text(
-      module.name, x + 20F + xOffset, y + height / 2F - 6.5F, 13F,
-      textColor
-    )
+    if (module.name.equals("Fairy", ignoreCase = true)) {
+      NVGRenderer.textGradient(
+        module.name,
+        x + 20F + xOffset,
+        y + height / 2F - 6.5F,
+        13F,
+        0xFFFF5AC8.toInt(),
+        0xFF3FE6FF.toInt(),
+        Gradient.LeftToRight
+      )
+    } else {
+      NVGRenderer.text(
+        module.name, x + 20F + xOffset, y + height / 2F - 6.5F, 13F,
+        textColor
+      )
+    }
   }
 
   override fun mouseClicked(button: Int): Boolean {
