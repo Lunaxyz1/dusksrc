@@ -7,6 +7,7 @@ import org.cobalt.api.module.ModuleManager
 import org.cobalt.api.ui.theme.ThemeManager
 import org.cobalt.api.util.ui.NVGRenderer
 import org.cobalt.internal.loader.AddonLoader
+import org.cobalt.internal.mining.MiningModule
 import org.cobalt.internal.ui.UIComponent
 import org.cobalt.internal.ui.components.UIAddonEntry
 import org.cobalt.internal.ui.components.UITopbar
@@ -83,16 +84,38 @@ internal class UIAddonList : UIPanel(
 
     val addonModules = AddonLoader.getAddons().flatMap { it.second.getModules() }.toSet()
     val builtinModules = ModuleManager.getModules().filter { it !in addonModules }
+    val miningModules = builtinModules.filter { it == MiningModule || it.name.equals("Mining", ignoreCase = true) }
+    val remainingBuiltinModules = builtinModules.filter { it !in miningModules }
 
-    if (builtinModules.isNotEmpty()) {
-      val version = FabricLoader.getInstance()
-        .getModContainer("cobalt")
-        .map { it.metadata.version.friendlyString }
-        .orElse("builtin")
+    val version = FabricLoader.getInstance()
+      .getModContainer("cobalt")
+      .map { it.metadata.version.friendlyString }
+      .orElse("builtin")
 
+    if (miningModules.isNotEmpty()) {
+      val miningMetadata = AddonMetadata(
+        id = "cobalt-mining",
+        name = "Mining",
+        version = version,
+        entrypoints = emptyList(),
+        mixins = emptyList()
+      )
+
+      val miningAddon = object : Addon() {
+        override fun onLoad() {}
+
+        override fun onUnload() {}
+
+        override fun getModules() = miningModules
+      }
+
+      entries.add(0, UIAddonEntry(miningMetadata, miningAddon))
+    }
+
+    if (remainingBuiltinModules.isNotEmpty()) {
       val builtinMetadata = AddonMetadata(
         id = "cobalt",
-        name = "Cobalt",
+        name = "Dutt Client",
         version = version,
         entrypoints = emptyList(),
         mixins = emptyList()
@@ -103,7 +126,7 @@ internal class UIAddonList : UIPanel(
 
         override fun onUnload() {}
 
-        override fun getModules() = builtinModules
+        override fun getModules() = remainingBuiltinModules
       }
 
       entries.add(0, UIAddonEntry(builtinMetadata, builtinAddon))

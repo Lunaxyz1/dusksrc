@@ -27,6 +27,7 @@ import org.cobalt.api.module.setting.impl.SliderSetting
 import org.cobalt.api.module.setting.impl.TextSetting
 import org.cobalt.api.notification.NotificationManager
 import org.cobalt.api.util.getLoreLines
+import org.cobalt.internal.grotto.GrottoIntegration
 
 private val MINING_BLOCK_HARDNESS = linkedMapOf(
   "Custom" to null,
@@ -217,6 +218,42 @@ object MiningModule : Module("Mining") {
     false
   )
 
+  val grottoEnabled = CheckboxSetting(
+    "Grotto Enabled",
+    "Enable Fairy Grotto routes and commands.",
+    true
+  )
+
+  val grottoRenderRoutes = CheckboxSetting(
+    "Grotto Render Routes",
+    "Render route lines in-world.",
+    true
+  )
+
+  val grottoRouteObstructionHighlights = CheckboxSetting(
+    "Grotto Route Obstructions",
+    "Highlight obstructing blocks along the current route.",
+    true
+  )
+
+  val grottoScannerEnabled = CheckboxSetting(
+    "Grotto Scanner",
+    "Scan for magenta grotto blocks in the Crystal Hollows.",
+    false
+  )
+
+  val grottoScannerRenderBoxes = CheckboxSetting(
+    "Grotto Scanner Boxes",
+    "Render ESP boxes on detected grotto blocks.",
+    true
+  )
+
+  val grottoScannerRenderTracers = CheckboxSetting(
+    "Grotto Scanner Tracers",
+    "Render tracers to detected grotto blocks.",
+    true
+  )
+
   val pingText = TextSetting(
     "Ping",
     "Current ping (ms).",
@@ -315,6 +352,12 @@ object MiningModule : Module("Mining") {
       frontLoadedActive,
       skymallActive,
       miningUmberTungsten,
+      grottoEnabled,
+      grottoRenderRoutes,
+      grottoRouteObstructionHighlights,
+      grottoScannerEnabled,
+      grottoScannerRenderBoxes,
+      grottoScannerRenderTracers,
       pingText,
       lookTicksText,
       scrapeStats,
@@ -323,6 +366,7 @@ object MiningModule : Module("Mining") {
       openHotm,
       exportHotm,
     )
+    GrottoIntegration.init()
     EventBus.register(this)
   }
 
@@ -439,10 +483,11 @@ object MiningModule : Module("Mining") {
 
   private fun parseMiningSpeed(lines: List<Component>): Double? {
     for (line in lines) {
-      val raw = stripFormatting(line.string)
-      if (!raw.contains("Mining Speed", ignoreCase = true)) continue
-      val number = extractNumber(raw) ?: continue
-      return number
+      val raw = stripFormatting(line.string).trim()
+      val statValue = parseMiningSpeedStatValue(raw)
+      if (statValue != null) {
+        return statValue
+      }
     }
     return null
   }
@@ -568,8 +613,8 @@ object MiningModule : Module("Mining") {
       }
       val lore = getTooltipLines(stack)
       for (line in lore) {
-        val raw = stripFormatting(line.string)
-        if (raw.contains("Mining Speed", ignoreCase = true)) {
+        val raw = stripFormatting(line.string).trim()
+        if (parseMiningSpeedStatValue(raw) != null) {
           return slot
         }
       }
@@ -626,14 +671,26 @@ object MiningModule : Module("Mining") {
           continue
         }
       }
-      if (raw.contains("Mining Speed", ignoreCase = true)) {
-        val value = extractNumber(raw)
-        if (value != null) {
-          result["Mining Speed"] = formatNumber(value)
-        }
+      val statValue = parseMiningSpeedStatValue(raw)
+      if (statValue != null) {
+        result["Mining Speed"] = formatNumber(statValue)
       }
     }
     return result
+  }
+
+  private fun parseMiningSpeedStatValue(raw: String): Double? {
+    val match = STAT_PAIR_PATTERN.matcher(raw)
+    if (!match.find()) return null
+    val name = normalizeStatName(match.group(1))
+    if (!name.equals("Mining Speed", ignoreCase = true)) return null
+    return match.group(2).replace(",", "").toDoubleOrNull()
+  }
+
+  private fun normalizeStatName(raw: String): String {
+    val stripped = raw.trim()
+    val cleaned = LEADING_DECORATION_PATTERN.matcher(stripped).replaceAll("")
+    return cleaned.trim()
   }
 
   private fun updateBlockDetection() {
@@ -807,6 +864,7 @@ object MiningModule : Module("Mining") {
   private val LEVEL_PATTERN = Pattern.compile("Level\\s+([0-9]+)")
   private val ROMAN_PATTERN = Pattern.compile("(?:Tier|Level)\\s+([IVX]+)", Pattern.CASE_INSENSITIVE)
   private val STAT_PAIR_PATTERN = Pattern.compile("^(.+?)\\s*[:\\s]+([0-9][0-9,]*(?:\\.[0-9]+)?)$")
+  private val LEADING_DECORATION_PATTERN = Pattern.compile("^[^A-Za-z0-9]+")
 
   private fun romanToInt(roman: String): Int {
     var sum = 0

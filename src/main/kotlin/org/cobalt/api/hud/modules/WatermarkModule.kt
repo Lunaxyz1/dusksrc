@@ -13,12 +13,12 @@ class WatermarkModule : Module("Watermark") {
 
   private val textSize = 18f
 
-  val watermark = hudElement("watermark", "Watermark", "Displays Cobalt branding") {
+  val watermark = hudElement("watermark", "Watermark", "Displays Dutt Client branding") {
     anchor = HudAnchor.TOP_LEFT
     offsetX = 10f
     offsetY = 10f
 
-    val text = setting(TextSetting("Text", "Display text", "Cobalt"))
+    val text = setting(TextSetting("Text", "Display text", "Dutt Client"))
     val color = setting(ColorSetting("Color", "Text color", ThemeManager.currentTheme.accent))
     val shadow = setting(CheckboxSetting("Shadow", "Show text shadow", false))
     val background = setting(CheckboxSetting("Background", "Show background box", false))

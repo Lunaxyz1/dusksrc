@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "cobalt",
   "version": "${version}",
-  "name": "Cobalt",
-  "description": "Core mod that loads and manages external modules through a shared API",
+  "name": "Dutt Client",
+  "description": "Core mod that loads and manages external modules through a shared API for Dutt Client",
   "authors": [
     "QuiteBoring",
     "Twiston",

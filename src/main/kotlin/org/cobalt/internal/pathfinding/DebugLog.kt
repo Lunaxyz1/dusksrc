@@ -11,9 +11,9 @@ import java.time.format.DateTimeFormatter
 object DebugLog {
 	var statusChatEnabled = true
 	var debugChatEnabled = false
-	var tag = "[Dusk]"
+	var tag = "[Dutt]"
 	var tickChatInterval = 20
-	var debugFileName = "dusk-debug.txt"
+	var debugFileName = "dutt-debug.txt"
 	var statusFileEnabled = true
 
 	private val lastChatTickByModule = HashMap<String, Long>()
@@ -53,7 +53,7 @@ object DebugLog {
 	fun startSession(client: Minecraft, module: String) {
 		val dir = client.gameDirectory ?: return
 		val stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now())
-		val file = File(dir, "dusk-debug-$module-$stamp.txt")
+		val file = File(dir, "dutt-debug-$module-$stamp.txt")
 		sessionFileByModule[module] = file
 		writeLine(client, module, "Session start", null)
 	}

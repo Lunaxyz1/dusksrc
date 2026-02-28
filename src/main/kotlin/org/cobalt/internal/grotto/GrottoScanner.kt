@@ -25,6 +25,7 @@ import org.cobalt.api.event.annotation.SubscribeEvent
 import org.cobalt.api.event.impl.client.TickEvent
 import org.cobalt.api.event.impl.render.WorldRenderEvent
 import org.cobalt.api.util.render.Render3D
+import org.cobalt.internal.mining.MiningModule
 
 object GrottoScanner {
 
@@ -100,7 +101,7 @@ object GrottoScanner {
   }
 
   private fun syncSetting() {
-    val desired = GrottoModule.scannerEnabled.value
+    val desired = MiningModule.grottoScannerEnabled.value
     if (desired != enabled) {
       setEnabled(desired, announce = false)
     }
@@ -109,7 +110,7 @@ object GrottoScanner {
   private fun setEnabled(value: Boolean, announce: Boolean) {
     if (enabled == value) return
     enabled = value
-    GrottoModule.scannerEnabled.value = value
+    MiningModule.grottoScannerEnabled.value = value
 
     if (announce) {
       val state = if (enabled) "Enabled" else "Disabled"
@@ -298,7 +299,7 @@ object GrottoScanner {
     val camPos = player.eyePosition
     val maxDistSq = (RENDER_MAX_DIST_BLOCKS * RENDER_MAX_DIST_BLOCKS).toDouble()
 
-    if (GrottoModule.scannerRenderBoxes.value) {
+    if (MiningModule.grottoScannerRenderBoxes.value) {
       magentaBlocks.forEach { pos ->
         val dx = (pos.x + 0.5) - camPos.x
         val dy = (pos.y + 0.5) - camPos.y
@@ -313,7 +314,7 @@ object GrottoScanner {
       }
     }
 
-    if (GrottoModule.scannerRenderTracers.value) {
+    if (MiningModule.grottoScannerRenderTracers.value) {
       val selected = HashMap<Long, BlockPos>()
       val selectedDist = HashMap<Long, Double>()
 

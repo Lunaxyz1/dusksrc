@@ -28,6 +28,7 @@ import org.cobalt.api.event.impl.render.WorldRenderEvent
 import org.cobalt.api.util.InventoryUtils
 import org.cobalt.api.util.render.Render3D
 import org.cobalt.internal.pathfinding.OverlayRenderEngine
+import org.cobalt.internal.mining.MiningModule
 
 object GrottoRouteRenderer {
 
@@ -67,7 +68,7 @@ object GrottoRouteRenderer {
 
   @SubscribeEvent
   fun onRender(event: WorldRenderEvent.Last) {
-    if (!GrottoModule.renderRoutes.value) {
+    if (!MiningModule.grottoRenderRoutes.value) {
       OverlayRenderEngine.clearTag(TAG_POINTS)
       OverlayRenderEngine.clearTag(TAG_BLOCKS)
       return
@@ -104,7 +105,7 @@ object GrottoRouteRenderer {
     }
 
     handleAutoRun(client)
-    if (GrottoModule.routeObstructionHighlights.value) {
+    if (MiningModule.grottoRouteObstructionHighlights.value) {
       updateObstructionHighlights(client)
     } else {
       OverlayRenderEngine.clearTag(TAG_BLOCKS)

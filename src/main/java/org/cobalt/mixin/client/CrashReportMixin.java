@@ -23,7 +23,7 @@ public abstract class CrashReportMixin {
 
     crashReportBuilder
       .append("\n========================================")
-      .append("\nCobalt Addons (")
+      .append("\nDutt Client Addons (")
       .append(AddonLoader.INSTANCE.getAddons().size())
       .append("): ")
       .append(addons)

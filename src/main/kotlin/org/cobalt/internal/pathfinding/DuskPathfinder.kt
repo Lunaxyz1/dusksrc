@@ -153,7 +153,7 @@ private var blockedRepathUntilTick = 0L
 private var blockedRepathFails = 0
 private val rng = kotlin.random.Random.Default
 
-private val logger = LogManager.getLogger("dusk-client")
+private val logger = LogManager.getLogger("dutt-client")
 
 private val profiles =
 	ConcurrentHashMap<String, PathPlanProfile>().apply {
@@ -1383,7 +1383,7 @@ private fun handleNavMeshRecovery(
 	smoothedTargetYaw = null
 	recovering = true
 	recoveryGoal = anchor
-	recoveryTargetIndex = -1
+	recoveryTargetIndex = findRecoveryIndex(level, anchor, hintTarget)
 	allowBackwardTicks = BACKWARD_ALLOW_TICKS
 	lastNavMeshTick = now
 	DebugLog.status(client, "Path", "Recovery: navmesh anchor ${anchor.x} ${anchor.y} ${anchor.z}")
@@ -1553,6 +1553,24 @@ private fun finishRecovery(
 	if (recoveryTargetIndex >= 0 && recoveryTargetIndex < mainPath.size) {
 		path = mainPath.toMutableList()
 		pathIndex = recoveryTargetIndex
+		checkpoints = buildCheckpoints(path)
+		checkpointIndex =
+			if (checkpoints.isEmpty()) {
+				0
+			} else {
+				(pathIndex / CHECKPOINT_STEP).coerceIn(0, checkpoints.lastIndex)
+			}
+		recovering = false
+		recoveryGoal = null
+		recoveryTargetIndex = -1
+		mainPathIndex = pathIndex
+		DebugLog.status(client, "Path", "Recovery: rejoined main path at index ${pathIndex + 1}/${path.size}.")
+		return true
+	}
+	val fallbackIndex = findRecoveryIndex(level, player.blockPosition(), finalTarget)
+	if (fallbackIndex >= 0 && fallbackIndex < mainPath.size) {
+		path = mainPath.toMutableList()
+		pathIndex = fallbackIndex
 		checkpoints = buildCheckpoints(path)
 		checkpointIndex =
 			if (checkpoints.isEmpty()) {
@@ -1748,7 +1766,17 @@ private fun resetStuck() {
 		)
 		setRepath(reason, level)
 		val finalGoal = target ?: goal
-		val newPath = planPath(level, player.blockPosition(), finalGoal, resolveProfile(currentProfileId))
+		val repathStart = resolveRepathStart(level, player.blockPosition(), finalGoal)
+		if (repathStart == null) {
+			DebugLog.status(client, "Path", "Repath $reason: no valid start.")
+			if (hard) {
+				DebugLog.status(client, "Path", "Failed: repath ($reason) found no valid start.")
+				stop(client, "Lost path.")
+				return true
+			}
+			return false
+		}
+		val newPath = planPath(level, repathStart, finalGoal, resolveProfile(currentProfileId))
 		if (newPath.isNotEmpty()) {
 			val changed = !isSamePath(newPath)
 			if (!changed && !allowSame) {
@@ -1778,6 +1806,11 @@ private fun resetStuck() {
 			return true
 		}
 		return false
+	}
+
+	private fun resolveRepathStart(level: Level, origin: BlockPos, hintTarget: BlockPos): BlockPos? {
+		MinecraftPathingRules.walkableAt(level, origin)?.let { return it }
+		return findNavMeshAnchor(level, origin, hintTarget)
 	}
 
 	private fun isSamePath(newPath: List<BlockPos>): Boolean {
