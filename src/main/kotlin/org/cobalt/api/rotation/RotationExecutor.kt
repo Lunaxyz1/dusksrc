@@ -22,6 +22,12 @@ object RotationExecutor {
     endRot: Rotation,
     strategy: IRotationStrategy,
   ) {
+    if (isRotating && currStrat === strategy) {
+      targetYaw = endRot.yaw
+      targetPitch = endRot.pitch
+      return
+    }
+
     stopRotating()
 
     targetYaw = endRot.yaw

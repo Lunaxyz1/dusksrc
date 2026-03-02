@@ -49,7 +49,8 @@ internal class HudSettingsPopup {
     visible = true
     settingsScroll.reset()
 
-    settingComponents = module.getSettings().map {
+    val scaleComponent = UIHudScaleSetting(module)
+    settingComponents = listOf(scaleComponent) + module.getSettings().map {
       when (it) {
         is ActionSetting -> UIActionSetting(it)
         is CheckboxSetting -> UICheckboxSetting(it)

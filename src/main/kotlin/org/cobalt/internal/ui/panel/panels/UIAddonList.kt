@@ -9,6 +9,8 @@ import org.cobalt.api.util.ui.NVGRenderer
 import org.cobalt.internal.loader.AddonLoader
 import org.cobalt.internal.mining.MiningModule
 import org.cobalt.internal.mining.FairyModule
+import org.cobalt.internal.mining.RoutesModule
+import org.cobalt.internal.combat.CombatMacroModule
 import org.cobalt.internal.ui.UIComponent
 import org.cobalt.internal.ui.components.UIAddonEntry
 import org.cobalt.internal.ui.components.UITopbar
@@ -89,10 +91,16 @@ internal class UIAddonList : UIPanel(
       builtinModules.filter {
         it == MiningModule ||
           it == FairyModule ||
+          it == RoutesModule ||
           it.name.equals("Mining", ignoreCase = true) ||
-          it.name.equals("Fairy", ignoreCase = true)
+          it.name.equals("Fairy", ignoreCase = true) ||
+          it.name.equals("Routes", ignoreCase = true)
       }
-    val remainingBuiltinModules = builtinModules.filter { it !in miningModules }
+    val combatModules =
+      builtinModules.filter {
+        it == CombatMacroModule || it.name.equals("Combat", ignoreCase = true)
+      }
+    val remainingBuiltinModules = builtinModules.filter { it !in miningModules && it !in combatModules }
 
     val version = FabricLoader.getInstance()
       .getModContainer("cobalt")
@@ -117,6 +125,26 @@ internal class UIAddonList : UIPanel(
       }
 
       entries.add(0, UIAddonEntry(miningMetadata, miningAddon))
+    }
+
+    if (combatModules.isNotEmpty()) {
+      val combatMetadata = AddonMetadata(
+        id = "cobalt-combat",
+        name = "Combat",
+        version = version,
+        entrypoints = emptyList(),
+        mixins = emptyList()
+      )
+
+      val combatAddon = object : Addon() {
+        override fun onLoad() {}
+
+        override fun onUnload() {}
+
+        override fun getModules() = combatModules
+      }
+
+      entries.add(0, UIAddonEntry(combatMetadata, combatAddon))
     }
 
     if (remainingBuiltinModules.isNotEmpty()) {

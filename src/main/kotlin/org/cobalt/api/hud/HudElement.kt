@@ -32,8 +32,17 @@ abstract class HudElement(
   /** Vertical offset from the [anchor] edge, in pixels. */
   var offsetY: Float = 10f
 
-  /** Render scale factor, clamped to 0.5-3.0 on load. */
+  /** Render scale factor. */
   var scale: Float = 1.0f
+    set(value) {
+      field = value.coerceIn(minScale, maxScale)
+    }
+
+  /** Minimum allowed render scale for this element. */
+  open val minScale: Float = 0.5f
+
+  /** Maximum allowed render scale for this element. */
+  open val maxScale: Float = 3.0f
 
   protected open val defaultAnchor: HudAnchor = HudAnchor.TOP_LEFT
   protected open val defaultOffsetX: Float = 10f
@@ -62,6 +71,12 @@ abstract class HudElement(
    * so draw relative to (0, 0).
    */
   abstract fun render(screenX: Float, screenY: Float, scale: Float)
+
+  /**
+   * Called after NVG rendering completes. Use this for non-NVG rendering (e.g. GuiGraphics).
+   * Coordinates are pre-translated, so draw relative to (0, 0).
+   */
+  open fun renderPost(screenX: Float, screenY: Float, scale: Float) {}
 
   fun getScaledWidth(): Float = getBaseWidth() * scale
   fun getScaledHeight(): Float = getBaseHeight() * scale

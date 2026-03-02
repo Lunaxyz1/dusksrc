@@ -14,6 +14,7 @@ public class GameRendererMixin {
   @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;incrementFrameNumber()V", shift = At.Shift.AFTER))
   public void renderNvg(DeltaTracker counter, boolean tick, CallbackInfo callbackInfo) {
     new NvgEvent().post();
+    new org.cobalt.api.event.impl.render.GuiPostRenderEvent().post();
   }
 
 }

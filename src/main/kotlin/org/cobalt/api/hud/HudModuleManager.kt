@@ -42,5 +42,9 @@ object HudModuleManager {
     }
 
     NVGRenderer.endFrame()
+    getElements().filter { it.enabled }.forEach { element ->
+      val (screenX, screenY) = element.getScreenPosition(screenWidth, screenHeight)
+      element.renderPost(screenX, screenY, element.scale)
+    }
   }
 }

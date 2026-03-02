@@ -17,18 +17,21 @@ import net.minecraft.world.level.Level
 import net.minecraft.world.phys.BlockHitResult
 import net.minecraft.world.phys.HitResult
 import net.minecraft.world.phys.Vec2
+import net.minecraft.world.phys.Vec3
 import org.apache.logging.log4j.LogManager
+import org.cobalt.api.util.MouseUtils
 import org.cobalt.api.notification.NotificationManager
 import org.cobalt.api.pathfinder.minecraft.MinecraftPathingRules
 import org.cobalt.api.pathfinder.pathing.result.PathState
 import org.cobalt.api.pathfinder.pathing.processing.impl.AvoidanceCache
 import org.cobalt.api.pathfinder.wrapper.PathPosition
 import org.cobalt.api.util.ChatUtils
+import org.cobalt.internal.etherwarp.EtherwarpLogic
 
 object DuskPathfinder {
 private const val MAX_REPATH_DISTANCE = 6.0
 private const val WAYPOINT_DISTANCE = 0.35
-private const val CHECKPOINT_STEP = 4
+private const val CHECKPOINT_STEP = 2
 private const val CHECKPOINT_REACHED_DISTANCE = 1.2
 private const val FINAL_ARRIVE_DISTANCE = 1.8
 private const val AUTO_STEER_MAX_DEGREES = 45.0
@@ -72,8 +75,11 @@ private const val SPLINE_ADVANCE_EPS = 0.25
 private const val BEHIND_YAW_DEGREES = 120.0
 private const val BEHIND_TICKS_LIMIT = 10
 private const val BEHIND_DIST_EPS = 0.05
+private const val NO_PROGRESS_TICKS_LIMIT = 30
+private const val NO_PROGRESS_EPS = 0.02
+private const val FORCE_DIRECT_TICKS = 30
 private const val SPLINE_FOLLOW_EPS = 0.35
-private const val SPLINE_LOOKAHEAD = 0.85
+private const val SPLINE_LOOKAHEAD = 0.5
 private const val BELOW_TARGET_Y_GAP = 2
 private const val BELOW_TICKS_LIMIT = 20
 private const val NEARBY_REPATH_RADIUS = 2
@@ -84,10 +90,27 @@ private const val JUMP_COOLDOWN_TICKS = 4
 private const val EARLY_JUMP_DISTANCE = 3.2
 private const val STEPUP_JUMP_DISTANCE = 1.4
 private const val CLIMB_JUMP_DISTANCE = 2.2
+private const val WALL_AVOID_STRAFE = 0.75f
+private const val WALL_AVOID_FORWARD = 0.3f
 private const val PATH_CACHE_TTL_TICKS = 60
 private const val PATH_CACHE_MAX = 512
 private const val AVOID_STUCK_TTL_TICKS = 400L
 private const val AVOID_STUCK_RADIUS = 1
+private const val ETHERWARP_COOLDOWN_TICKS = 40L
+private const val ETHERWARP_ALIGN_TICKS = 6
+private const val ETHERWARP_SNEAK_TICKS = 2
+private const val ETHERWARP_POST_TICKS = 6
+private const val ETHERWARP_OPPORTUNITY_INTERVAL = 60L
+private const val ETHERWARP_OPPORTUNITY_CHANCE = 0.35
+private const val ETHERWARP_MIN_GAIN_SQ = 64.0
+private const val ETHERWARP_MIN_DISTANCE_SQ = 100.0
+private const val DEBUG_ETHERWARP = true
+private const val ETHERWARP_RENDER_TAG = "etherwarp"
+private const val ETHERWARP_CLIMB_THRESHOLD = 7
+private const val REMOTE_STEP_DISTANCE = 32.0
+private const val REMOTE_STEP_MIN = 10.0
+private const val REMOTE_STEP_SCAN_RADIUS = 6
+private const val REMOTE_STEP_SCAN_VERTICAL = 3
 
 private var target: BlockPos? = null
 private var path: MutableList<BlockPos> = mutableListOf()
@@ -140,6 +163,9 @@ private var desiredPitch: Double? = null
 private var pauseTicks = 0
 private var behindTicks = 0
 private var lastDist2 = Double.NaN
+private var noProgressTicks = 0
+private var lastProgressDist2 = Double.NaN
+private var forceDirectTicks = 0
 private var belowTicks = 0
 private var jumpHoldTicks = 0
 private var jumpCooldownTicks = 0
@@ -151,7 +177,16 @@ private var waterEscapeActive = false
 private var lastNavMeshTick = 0L
 private var blockedRepathUntilTick = 0L
 private var blockedRepathFails = 0
+private var etherwarpActive = false
+private var etherwarpTarget: BlockPos? = null
+private var etherwarpStage = 0
+private var etherwarpStageTicks = 0
+private var etherwarpCooldownUntil = 0L
+private var etherwarpRepathTick = 0L
+private var etherwarpAutoSlot = -1
+private var etherwarpAutoActive = false
 private val rng = kotlin.random.Random.Default
+private var remoteGoal: BlockPos? = null
 
 private val logger = LogManager.getLogger("dutt-client")
 
@@ -225,6 +260,36 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 	currentProfileId = profile.id
 	val newPath = planPath(level, start, resolvedTarget, profile)
 	if (newPath.isEmpty()) {
+		val progress = findRemoteProgressTarget(level, start, resolvedTarget)
+		if (progress != null) {
+			val progressPath = planPath(level, start, progress, profile)
+			if (progressPath.isNotEmpty()) {
+				DebugLog.startSession(client, "Path")
+				target = progress
+				remoteGoal = resolvedTarget
+				path = progressPath.toMutableList()
+				pathIndex = 0
+				checkpoints = buildCheckpoints(path)
+				checkpointIndex = 0
+				active = true
+				mainPath = path.toList()
+				mainPathIndex = 0
+				recoveryTargetIndex = -1
+				recovering = false
+				recoveryGoal = null
+				resetStuck()
+				etherwarpAutoSlot = -1
+				etherwarpAutoActive = false
+				OverlayRenderEngine.setEnabled(true)
+				notify(client, "Pathing toward ${resolvedTarget.x} ${resolvedTarget.y} ${resolvedTarget.z}.")
+				DebugLog.status(
+					client,
+					"Path",
+					"Started remote -> ${resolvedTarget.x} ${resolvedTarget.y} ${resolvedTarget.z} via ${progress.x} ${progress.y} ${progress.z}"
+				)
+				return true
+			}
+		}
 		notify(client, "No path found.")
 		DebugLog.status(client, "Path", "Failed: no path found.")
 		return false
@@ -242,6 +307,8 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 	recovering = false
 	recoveryGoal = null
 	resetStuck()
+	etherwarpAutoSlot = -1
+	etherwarpAutoActive = false
 	OverlayRenderEngine.setEnabled(true)
 	notify(client, "Pathing to ${resolvedTarget.x} ${resolvedTarget.y} ${resolvedTarget.z}.")
 	DebugLog.status(
@@ -268,8 +335,11 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 	recoveryGoal = null
 	recoveryTargetIndex = -1
 	OverlayRenderEngine.clearTag(PATH_TAG)
+	OverlayRenderEngine.clearTag(ETHERWARP_RENDER_TAG)
 	resetStuck()
+	restoreEtherwarpHotbar(client)
 	resetInput(client)
+	remoteGoal = null
 		val finalReason = reason ?: "Stopped."
 		val endPos = client.player?.blockPosition()
 		val endText = if (endPos != null) " at ${endPos.x} ${endPos.y} ${endPos.z}" else ""
@@ -287,6 +357,9 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		val player = client.player ?: return
 		val level = client.level ?: return
 		val currentTarget = target ?: return
+		if (forceDirectTicks > 0) {
+			forceDirectTicks--
+		}
 		DebugLog.debugTickFile(
 			client,
 			"Path",
@@ -300,6 +373,14 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 
 	if (client.screen != null) {
 		resetInput(client)
+		resetProgress()
+		updateLastPos(player)
+		return
+	}
+
+	ensureEtherwarpHotbarSelected(client)
+
+	if (handleEtherwarp(client, level, player, currentTarget)) {
 		updateLastPos(player)
 		return
 	}
@@ -345,6 +426,12 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 				return
 			}
 		}
+		if (remoteGoal != null) {
+			if (continueRemotePath(client, level, player)) {
+				updateLastPos(player)
+				return
+			}
+		}
 		stop(client, "Arrived.")
 		return
 	}
@@ -356,7 +443,7 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 
 		val finalTarget = target
 		val waypoint =
-			if (!recovering && finalTarget != null && pathIndex >= path.size - 1) {
+			if (!recovering && finalTarget != null && pathIndex >= path.size - 1 && MinecraftPathingRules.isWalkable(level, finalTarget)) {
 				finalTarget
 			} else {
 				path[pathIndex]
@@ -370,21 +457,33 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 			updateLastPos(player)
 			return
 		}
-		val spline = resolveSplineTarget(player)
-		val targetX = spline?.x ?: (waypoint.x + 0.5)
-		val targetY = spline?.y ?: (waypoint.y + 0.5)
-		val targetZ = spline?.z ?: (waypoint.z + 0.5)
+		val spline = if (forceDirectTicks > 0) null else resolveSplineTarget(player)
+		var targetX = spline?.x ?: (waypoint.x + 0.5)
+		var targetY = spline?.y ?: (waypoint.y + 0.5)
+		var targetZ = spline?.z ?: (waypoint.z + 0.5)
+		val dy = waypoint.y - player.blockY
+		if (!recovering && dy > ETHERWARP_CLIMB_THRESHOLD) {
+			if (attemptEtherwarp(client, level, player, currentTarget, "climb")) {
+				updateLastPos(player)
+				return
+			}
+		}
+		resolveMoveTarget(player, waypoint, currentTarget)?.let { moveTarget ->
+			targetX = moveTarget.x + 0.5
+			targetY = moveTarget.y + 0.5
+			targetZ = moveTarget.z + 0.5
+		}
 		val dx = targetX - player.x
 		val dz = targetZ - player.z
-		val dy = waypoint.y - player.blockY
 		debugTargetX = targetX
 		debugTargetY = targetY
 		debugTargetZ = targetZ
 		val waypointX = waypoint.x + 0.5
 		val waypointY = waypoint.y + 0.5
 		val waypointZ = waypoint.z + 0.5
-		val (targetYaw, targetPitch) = computeYawPitch(player.x, player.y, player.z, waypointX, waypointY, waypointZ)
-		val (lookYaw, lookPitch) = computeYawPitch(player.x, player.y, player.z, targetX, targetY, targetZ)
+		val eyeY = player.getEyePosition(1.0f).y
+		val (targetYaw, targetPitch) = computeYawPitch(player.x, eyeY, player.z, waypointX, eyeY, waypointZ)
+		val (lookYaw, lookPitch) = computeYawPitch(player.x, eyeY, player.z, targetX, eyeY, targetZ)
 		val splineYaw = if (spline != null) lookYaw else targetYaw
 		debugTargetYaw = targetYaw
 		debugTargetPitch = targetPitch
@@ -430,6 +529,7 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 
 	if (reachedHorizontal && reachedVertical) {
 		pathIndex++
+		resetProgress()
 		if (pathIndex >= path.size) {
 			val finalTarget = target
 			if (finalTarget != null && recovering) {
@@ -463,6 +563,10 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		updateLastPos(player)
 		return
 	}
+	if (!recovering && attemptOpportunisticEtherwarp(client, level, player, currentTarget)) {
+		updateLastPos(player)
+		return
+	}
 	if (blockedRepathTriggered) {
 		updateLastPos(player)
 		return
@@ -487,11 +591,19 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 			val targetYaw = (atan2(-dx, dz) * (180.0 / Math.PI)).toFloat()
 			smoothRotate(player, targetYaw)
 		}
-		val move = computeMoveInput(player.yRot.toDouble(), dx, dz)
+		var move = computeMoveInput(player.yRot.toDouble(), dx, dz)
+		if (dy < 0 && waypointDist2 < 1.2 && player.onGround()) {
+			val nudgedForward = max(move.second, 0.65f)
+			val nudgedStrafe = if (kotlin.math.abs(move.first) > 0.3f) move.first * 0.4f else move.first
+			move = nudgedStrafe to nudgedForward
+		}
 		if (jumpCooldownTicks > 0) {
 			jumpCooldownTicks--
 		}
 		val jumpRequest = shouldJump(level, player, waypointDx, waypointDz, dy, waypoint)
+		if (!jumpRequest) {
+			move = avoidWall(level, player, dx, dz, move.first, move.second)
+		}
 		val climbJump =
 			dy > 0 &&
 				player.onGround() &&
@@ -517,6 +629,10 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 	debugJump = jump || jumpRequest
 	debugDist2 = dist2
 	debugDy = dy
+		if (!recovering && handleNoProgress(client, level, player, currentTarget, dist2, move)) {
+			updateLastPos(player)
+			return
+		}
 		if (!recovering && handleBehindRepath(client, level, player, currentTarget, dist2)) {
 			updateLastPos(player)
 			return
@@ -577,6 +693,11 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		allowBackwardTicks = 0
 		waterEscapeTarget = null
 		waterEscapeActive = false
+		etherwarpActive = false
+		etherwarpTarget = null
+		etherwarpStage = 0
+		etherwarpStageTicks = 0
+		etherwarpRepathTick = 0L
 		lastNavMeshTick = 0L
 		applyMovement(client, player.input, 0f, 0f, false, false, false)
 	}
@@ -604,10 +725,18 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 			}
 		val state = result.getPathState()
 		if (state == PathState.FAILED || state == PathState.ABORTED) {
+			if (profile.id == PathPlanProfiles.DEFAULT_ID) {
+				val deep = planPath(level, start, goal, PathPlanProfiles.DEEP)
+				if (deep.isNotEmpty()) return deep
+			}
 			return emptyList()
 		}
 		val positions = result.getPath().collect()
 		if (positions.isEmpty()) {
+			if (profile.id == PathPlanProfiles.DEFAULT_ID) {
+				val deep = planPath(level, start, goal, PathPlanProfiles.DEEP)
+				if (deep.isNotEmpty()) return deep
+			}
 			return emptyList()
 		}
 		val nodes = positions.map { BlockPos(it.flooredX, it.flooredY, it.flooredZ) }
@@ -697,6 +826,7 @@ private fun advanceCheckpoint(client: Minecraft, level: Level, player: net.minec
 		return
 	}
 	checkpointIndex++
+	resetProgress()
 	val finalTarget = target
 	if (!recovering && finalTarget != null) {
 		if (debugRepathTick == 0L || level.gameTime - debugRepathTick >= REPATH_INTERVAL_TICKS) {
@@ -895,6 +1025,9 @@ private fun shouldJump(level: Level, player: net.minecraft.client.player.LocalPl
 	if (!player.onGround()) {
 		return false
 	}
+	if (dy < 0) {
+		return false
+	}
 	val dir = if (abs(dx) >= abs(dz)) {
 		if (dx >= 0) Direction.EAST else Direction.WEST
 	} else {
@@ -957,6 +1090,11 @@ private fun isJumpEdge(level: Level, pos: BlockPos, dir: Direction, waypoint: Bl
 
 		var forward = (dirX * forwardX + dirZ * forwardZ).toFloat().coerceIn(-1f, 1f)
 		var strafe = (dirX * rightX + dirZ * rightZ).toFloat().coerceIn(-1f, 1f)
+		if (absDelta > 70.0) {
+			strafe = 0f
+		} else if (absDelta > 45.0) {
+			strafe *= 0.35f
+		}
 
 		val angleScale = ((absDelta - 6.0) / AUTO_STEER_MAX_DEGREES).coerceIn(0.0, 1.0)
 		val distScale = ((len - 0.6) / 2.0).coerceIn(0.0, 1.0)
@@ -974,6 +1112,78 @@ private fun isJumpEdge(level: Level, pos: BlockPos, dir: Direction, waypoint: Bl
 		debugDot = forward.toDouble()
 		debugFlip = forward < 0f
 		return strafe to forward
+	}
+
+	private fun resolveMoveTarget(
+		player: net.minecraft.client.player.LocalPlayer,
+		waypoint: BlockPos,
+		fallback: BlockPos?
+	): BlockPos? {
+		if (waypoint.y >= player.blockY) {
+			return null
+		}
+		val dx = (waypoint.x + 0.5) - player.x
+		val dz = (waypoint.z + 0.5) - player.z
+		if (dx * dx + dz * dz > 0.25) {
+			return null
+		}
+		val playerPos = player.blockPosition()
+		if (path.isNotEmpty()) {
+			val maxIndex = minOf(pathIndex + 6, path.lastIndex)
+			for (i in (pathIndex + 1)..maxIndex) {
+				val candidate = path[i]
+				if (candidate.x != playerPos.x || candidate.z != playerPos.z) {
+					return candidate
+				}
+			}
+		}
+		if (fallback != null && (fallback.x != playerPos.x || fallback.z != playerPos.z)) {
+			return fallback
+		}
+		return null
+	}
+
+	private fun avoidWall(
+		level: Level,
+		player: net.minecraft.client.player.LocalPlayer,
+		dx: Double,
+		dz: Double,
+		strafe: Float,
+		forward: Float
+	): Pair<Float, Float> {
+		if (forward <= 0.05f) {
+			return strafe to forward
+		}
+		if (!player.onGround()) {
+			return strafe to forward
+		}
+		val dir = Direction.fromYRot(player.yRot.toDouble())
+		val pos = player.blockPosition()
+		val front = pos.relative(dir)
+		val frontClear = MinecraftPathingRules.isPassable(level, front) && MinecraftPathingRules.isPassable(level, front.above())
+		if (frontClear) {
+			return strafe to forward
+		}
+		val leftDir = dir.counterClockWise
+		val rightDir = dir.clockWise
+		val left = pos.relative(leftDir)
+		val right = pos.relative(rightDir)
+		val leftClear = MinecraftPathingRules.isPassable(level, left) && MinecraftPathingRules.isPassable(level, left.above())
+		val rightClear = MinecraftPathingRules.isPassable(level, right) && MinecraftPathingRules.isPassable(level, right.above())
+		if (!leftClear && !rightClear) {
+			return strafe to forward
+		}
+		val chooseRight =
+			if (leftClear && rightClear) {
+				val leftScore = dx * leftDir.stepX + dz * leftDir.stepZ
+				val rightScore = dx * rightDir.stepX + dz * rightDir.stepZ
+				rightScore >= leftScore
+			} else {
+				rightClear
+			}
+		val newStrafe = if (chooseRight) WALL_AVOID_STRAFE else -WALL_AVOID_STRAFE
+		val newForward = forward.coerceAtMost(WALL_AVOID_FORWARD)
+		return newStrafe to newForward
 	}
 
 	private fun wrapDegrees(degrees: Double): Double {
@@ -1092,6 +1302,10 @@ private fun handleStuck(
 		val reTarget = target
 		if (reTarget == null) {
 			DebugLog.status(client, "Path", "Failed: no target for repath.")
+			if (attemptEtherwarp(client, level, player, waypoint, "stuck")) {
+				stuckTicks = 0
+				return true
+			}
 			stop(client, "Stuck.")
 			return true
 		}
@@ -1136,6 +1350,7 @@ private fun attemptRecoveryPath(
 	checkpoints = buildCheckpoints(path)
 	checkpointIndex = 0
 	smoothedTargetYaw = null
+	resetProgress()
 	recovering = true
 	recoveryGoal = recovery
 	recoveryTargetIndex = recoveryIndex
@@ -1199,6 +1414,7 @@ private fun attemptNearbyRepath(
 		checkpoints = buildCheckpoints(path)
 		checkpointIndex = 0
 		smoothedTargetYaw = null
+		resetProgress()
 		recovering = false
 		recoveryGoal = null
 		recoveryTargetIndex = -1
@@ -1270,6 +1486,7 @@ private fun attemptEscapeRepath(
 		checkpoints = buildCheckpoints(path)
 		checkpointIndex = 0
 		smoothedTargetYaw = null
+		resetProgress()
 		recovering = false
 		recoveryGoal = null
 		recoveryTargetIndex = -1
@@ -1319,6 +1536,10 @@ private fun handleBelowRecovery(
 	if (recovering) {
 		return false
 	}
+	if (waypoint.y <= player.blockY + 1) {
+		belowTicks = 0
+		return false
+	}
 	val hint = currentCheckpoint() ?: target ?: waypoint
 	val targetY = hint.y
 	if (player.blockY + BELOW_TARGET_Y_GAP <= targetY && player.onGround() && !MinecraftPathingRules.isClimbable(level, player.blockPosition())) {
@@ -1352,6 +1573,9 @@ private fun handleNavMeshRecovery(
 	if (recovering || waterEscapeActive) {
 		return false
 	}
+	if (isAtTarget(player, hintTarget, FINAL_ARRIVE_DISTANCE)) {
+		return false
+	}
 	if (!player.onGround()) {
 		return false
 	}
@@ -1381,6 +1605,7 @@ private fun handleNavMeshRecovery(
 	checkpoints = buildCheckpoints(path)
 	checkpointIndex = 0
 	smoothedTargetYaw = null
+	resetProgress()
 	recovering = true
 	recoveryGoal = anchor
 	recoveryTargetIndex = findRecoveryIndex(level, anchor, hintTarget)
@@ -1459,6 +1684,100 @@ private fun handleWaterEscape(
 	}
 	val move = computeMoveInput(player.yRot.toDouble(), dx, dz)
 	applyMovement(client, player.input, move.first, move.second, true, false, false)
+	return true
+}
+
+private fun handleEtherwarp(
+	client: Minecraft,
+	level: Level,
+	player: net.minecraft.client.player.LocalPlayer,
+	finalTarget: BlockPos
+): Boolean {
+	val now = level.gameTime
+	if (etherwarpRepathTick != 0L && now >= etherwarpRepathTick && !etherwarpActive) {
+		etherwarpRepathTick = 0L
+		attemptRepath(client, level, player, "etherwarp", finalTarget, hard = true, allowSame = false)
+	}
+	if (!etherwarpActive) {
+		OverlayRenderEngine.clearTag(ETHERWARP_RENDER_TAG)
+		return false
+	}
+	ensureEtherwarpHotbarSelected(client)
+	renderEtherwarpOverlay(level, player)
+	if (!EtherwarpLogic.holdingEtherwarpItem() || (etherwarpStage == 0 && !EtherwarpLogic.canEtherwarp())) {
+		etherwarpActive = false
+		etherwarpTarget = null
+		resetInput(client)
+		etherwarpLog(client, "abort: not holding etherwarp item or cannot etherwarp (stage=$etherwarpStage).")
+		return false
+	}
+	val targetPos = etherwarpTarget ?: run {
+		etherwarpActive = false
+		etherwarpLog(client, "abort: no target set.")
+		return false
+	}
+	val (yaw, pitch) = computeYawPitch(
+		player.x,
+		player.y,
+		player.z,
+		targetPos.x + 0.5,
+		targetPos.y + 0.5,
+		targetPos.z + 0.5
+	)
+	debugLookPitch = pitch
+	debugDy = targetPos.y - player.blockY
+	if (SMOOTH_ROTATE) {
+		smoothRotate(player, yaw.toFloat())
+	} else {
+		player.yRot = yaw.toFloat()
+		player.xRot = pitch.toFloat()
+	}
+	val yawError = kotlin.math.abs(wrapDegrees(yaw - player.yRot.toDouble()))
+	val ready = yawError <= 6.0 || etherwarpStageTicks >= ETHERWARP_ALIGN_TICKS
+	applyMovement(client, player.input, 0f, 0f, false, false, false)
+	etherwarpTick(
+		client,
+		level,
+		"stage=$etherwarpStage ready=$ready yawErr=${"%.2f".format(yawError)} " +
+			"target=${targetPos.x} ${targetPos.y} ${targetPos.z} " +
+			"player=${player.blockX} ${player.blockY} ${player.blockZ}"
+	)
+
+	if (!ready) {
+		etherwarpStageTicks++
+		return true
+	}
+	when (etherwarpStage) {
+		0 -> {
+			client.options.keyShift.setDown(true)
+			etherwarpStage = 1
+			etherwarpStageTicks = 0
+			etherwarpLog(client, "stage 0 -> 1 (sneak down).")
+		}
+		1 -> {
+			if (etherwarpStageTicks >= ETHERWARP_SNEAK_TICKS) {
+				MouseUtils.rightClick()
+				etherwarpStage = 2
+				etherwarpStageTicks = 0
+				etherwarpLog(client, "stage 1 -> 2 (right click).")
+			} else {
+				etherwarpStageTicks++
+			}
+		}
+		else -> {
+			if (etherwarpStageTicks >= ETHERWARP_POST_TICKS) {
+				client.options.keyShift.setDown(false)
+				etherwarpActive = false
+				etherwarpTarget = null
+				etherwarpStage = 0
+				etherwarpStageTicks = 0
+				etherwarpRepathTick = now + 2
+				etherwarpLog(client, "stage 2 -> done (repath queued).")
+			} else {
+				etherwarpStageTicks++
+			}
+		}
+	}
 	return true
 }
 
@@ -1543,6 +1862,271 @@ private fun attemptEscapeHole(
 	return true
 }
 
+private fun ensureEtherwarpHotbarSelected(client: Minecraft): Boolean {
+	val player = client.player ?: return false
+	val inventory = player.inventory
+	val currentSlot = inventory.selectedSlot
+	val currentStack = inventory.getItem(currentSlot)
+	if (EtherwarpLogic.isEtherwarpStack(currentStack)) {
+		return true
+	}
+	val slot = EtherwarpLogic.findEtherwarpHotbarSlot()
+	if (slot == -1) {
+		return false
+	}
+	if (!etherwarpAutoActive) {
+		etherwarpAutoSlot = currentSlot
+		etherwarpAutoActive = true
+	}
+	if (currentSlot != slot) {
+		org.cobalt.api.util.InventoryUtils.holdHotbarSlot(slot)
+	}
+	return true
+}
+
+private fun restoreEtherwarpHotbar(client: Minecraft) {
+	if (!etherwarpAutoActive) {
+		return
+	}
+	val player = client.player ?: return
+	if (etherwarpAutoSlot in 0..8) {
+		org.cobalt.api.util.InventoryUtils.holdHotbarSlot(etherwarpAutoSlot)
+	}
+	etherwarpAutoSlot = -1
+	etherwarpAutoActive = false
+}
+
+private fun attemptEtherwarp(
+	client: Minecraft,
+	level: Level,
+	player: net.minecraft.client.player.LocalPlayer,
+	goal: BlockPos,
+	reason: String,
+	forcedTarget: BlockPos? = null
+): Boolean {
+	if (etherwarpActive) {
+		return true
+	}
+	if (level.gameTime < etherwarpCooldownUntil) {
+		etherwarpLog(client, "skip: cooldown active.")
+		return false
+	}
+	if (!ensureEtherwarpHotbarSelected(client)) {
+		etherwarpLog(client, "skip: no etherwarp item on hotbar.")
+		return false
+	}
+	if (!EtherwarpLogic.holdingEtherwarpItem() || !EtherwarpLogic.canEtherwarp()) {
+		etherwarpLog(client, "skip: not holding etherwarp item or cannot etherwarp.")
+		return false
+	}
+	val targetBlock = forcedTarget ?: selectEtherwarpTarget(level, player, goal) ?: return false
+	etherwarpActive = true
+	etherwarpTarget = targetBlock
+	etherwarpStage = 0
+	etherwarpStageTicks = 0
+	etherwarpCooldownUntil = level.gameTime + ETHERWARP_COOLDOWN_TICKS
+	val range = EtherwarpLogic.getEtherwarpRange()
+	val dist = kotlin.math.sqrt(player.blockPosition().distSqr(targetBlock).toDouble())
+	etherwarpLog(
+		client,
+		"start reason=$reason target=${targetBlock.x} ${targetBlock.y} ${targetBlock.z} " +
+			"range=$range dist=${"%.2f".format(dist)} goal=${goal.x} ${goal.y} ${goal.z}"
+	)
+	DebugLog.status(
+		client,
+		"Path",
+		"Etherwarp: attempting $reason to ${targetBlock.x} ${targetBlock.y} ${targetBlock.z}"
+	)
+	return true
+}
+
+private fun attemptOpportunisticEtherwarp(
+	client: Minecraft,
+	level: Level,
+	player: net.minecraft.client.player.LocalPlayer,
+	goal: BlockPos
+): Boolean {
+	if (etherwarpActive || recovering || waterEscapeActive) {
+		return false
+	}
+	if (level.gameTime % ETHERWARP_OPPORTUNITY_INTERVAL != 0L) {
+		return false
+	}
+	if (rng.nextDouble() > ETHERWARP_OPPORTUNITY_CHANCE) {
+		return false
+	}
+	if (!ensureEtherwarpHotbarSelected(client)) {
+		return false
+	}
+	if (!EtherwarpLogic.holdingEtherwarpItem() || !EtherwarpLogic.canEtherwarp()) {
+		return false
+	}
+	val currentDistSq = player.blockPosition().distSqr(goal).toDouble()
+	if (currentDistSq < ETHERWARP_MIN_DISTANCE_SQ) {
+		return false
+	}
+	val candidate = selectEtherwarpTargetWithGain(level, player, goal, currentDistSq) ?: return false
+	return attemptEtherwarp(client, level, player, goal, "opportunistic", candidate)
+}
+
+private fun selectEtherwarpTarget(
+	level: Level,
+	player: net.minecraft.client.player.LocalPlayer,
+	goal: BlockPos
+): BlockPos? {
+	val range = EtherwarpLogic.getEtherwarpRange().toDouble()
+	val eye = player.getEyePosition(1.0f)
+
+	val direct = candidateWarpBlock(level, goal)
+	if (direct != null && canSeeWarpBlock(level, player, eye, direct, range)) {
+		etherwarpLog(Minecraft.getInstance(), "candidate direct: ${direct.x} ${direct.y} ${direct.z}")
+		return direct
+	}
+
+	if (path.isNotEmpty()) {
+		val start = pathIndex.coerceAtLeast(0)
+		for (i in path.lastIndex downTo start) {
+			val candidate = candidateWarpBlock(level, path[i]) ?: continue
+			if (canSeeWarpBlock(level, player, eye, candidate, range)) {
+				etherwarpLog(Minecraft.getInstance(), "candidate path: ${candidate.x} ${candidate.y} ${candidate.z} idx=$i")
+				return candidate
+			}
+		}
+	}
+
+	etherwarpLog(Minecraft.getInstance(), "no visible etherwarp candidate.")
+	return null
+}
+
+private fun selectEtherwarpTargetWithGain(
+	level: Level,
+	player: net.minecraft.client.player.LocalPlayer,
+	goal: BlockPos,
+	currentDistSq: Double
+): BlockPos? {
+	val range = EtherwarpLogic.getEtherwarpRange().toDouble()
+	val eye = player.getEyePosition(1.0f)
+	var best: BlockPos? = null
+	var bestDistSq = currentDistSq
+
+	fun consider(candidate: BlockPos?) {
+		if (candidate == null) return
+		if (!canSeeWarpBlock(level, player, eye, candidate, range)) return
+		val distSq = candidate.distSqr(goal).toDouble()
+		if (distSq + ETHERWARP_MIN_GAIN_SQ <= bestDistSq) {
+			bestDistSq = distSq
+			best = candidate
+		}
+	}
+
+	consider(candidateWarpBlock(level, goal))
+	if (path.isNotEmpty()) {
+		val start = pathIndex.coerceAtLeast(0)
+		var i = path.lastIndex
+		while (i >= start) {
+			consider(candidateWarpBlock(level, path[i]))
+			i -= 2
+		}
+	}
+	return best
+}
+
+private fun candidateWarpBlock(level: Level, pos: BlockPos): BlockPos? {
+	return if (MinecraftPathingRules.isWalkable(level, pos)) {
+		val block = pos.below()
+		if (level.getBlockState(block).isAir) null else block
+	} else {
+		if (level.getBlockState(pos).isAir) null else pos
+	}
+}
+
+private fun canSeeWarpBlock(
+	level: Level,
+	player: net.minecraft.client.player.LocalPlayer,
+	eye: Vec3,
+	block: BlockPos,
+	range: Double
+): Boolean {
+	val center = Vec3(block.x + 0.5, block.y + 0.5, block.z + 0.5)
+	if (eye.distanceTo(center) > range + 0.5) {
+		etherwarpLog(Minecraft.getInstance(), "candidate ${block.x} ${block.y} ${block.z} rejected: out of range.")
+		return false
+	}
+	if (!MinecraftPathingRules.isPassable(level, block.above()) || !MinecraftPathingRules.isPassable(level, block.above(2))) {
+		etherwarpLog(Minecraft.getInstance(), "candidate ${block.x} ${block.y} ${block.z} rejected: no headroom.")
+		return false
+	}
+	val hit =
+		level.clip(
+			net.minecraft.world.level.ClipContext(
+				eye,
+				center,
+				net.minecraft.world.level.ClipContext.Block.OUTLINE,
+				net.minecraft.world.level.ClipContext.Fluid.NONE,
+				player
+			)
+		)
+	if (hit.type != HitResult.Type.BLOCK) {
+		etherwarpLog(Minecraft.getInstance(), "candidate ${block.x} ${block.y} ${block.z} rejected: no block hit.")
+		return false
+	}
+	val hitPos = (hit as BlockHitResult).blockPos
+	if (hitPos != block) {
+		etherwarpLog(Minecraft.getInstance(), "candidate ${block.x} ${block.y} ${block.z} rejected: hit ${hitPos.x} ${hitPos.y} ${hitPos.z}.")
+		return false
+	}
+	return hitPos == block
+}
+
+private fun renderEtherwarpOverlay(level: Level, player: net.minecraft.client.player.LocalPlayer) {
+	val targetPos = etherwarpTarget ?: run {
+		OverlayRenderEngine.clearTag(ETHERWARP_RENDER_TAG)
+		return
+	}
+	val outline = OverlayRenderEngine.Color(0, 255, 255, 220)
+	val fill = OverlayRenderEngine.Color(0, 255, 255, 45)
+	val pad = 0.002
+	OverlayRenderEngine.addBox(
+		level,
+		targetPos.x - pad,
+		targetPos.y - pad,
+		targetPos.z - pad,
+		targetPos.x + 1.0 + pad,
+		targetPos.y + 1.0 + pad,
+		targetPos.z + 1.0 + pad,
+		fill,
+		outline,
+		2.4f,
+		2,
+		ETHERWARP_RENDER_TAG
+	)
+	val eye = player.getEyePosition(1.0f)
+	val center = Vec3(targetPos.x + 0.5, targetPos.y + 0.5, targetPos.z + 0.5)
+	OverlayRenderEngine.addLine(
+		level,
+		eye.x,
+		eye.y,
+		eye.z,
+		center.x,
+		center.y,
+		center.z,
+		outline.withAlpha(180),
+		1.8f,
+		2,
+		ETHERWARP_RENDER_TAG
+	)
+}
+
+private fun etherwarpLog(client: Minecraft, message: String) {
+	if (!DEBUG_ETHERWARP) return
+	DebugLog.status(client, "Etherwarp", message)
+}
+
+private fun etherwarpTick(client: Minecraft, level: Level, message: String) {
+	if (!DEBUG_ETHERWARP) return
+	DebugLog.debugTickFile(client, "Etherwarp", message, level.gameTime)
+}
+
 private fun finishRecovery(
 	client: Minecraft,
 	level: Level,
@@ -1560,6 +2144,7 @@ private fun finishRecovery(
 			} else {
 				(pathIndex / CHECKPOINT_STEP).coerceIn(0, checkpoints.lastIndex)
 			}
+		resetProgress()
 		recovering = false
 		recoveryGoal = null
 		recoveryTargetIndex = -1
@@ -1578,6 +2163,7 @@ private fun finishRecovery(
 			} else {
 				(pathIndex / CHECKPOINT_STEP).coerceIn(0, checkpoints.lastIndex)
 			}
+		resetProgress()
 		recovering = false
 		recoveryGoal = null
 		recoveryTargetIndex = -1
@@ -1686,6 +2272,52 @@ private fun handleBehindRepath(
 	return false
 }
 
+private fun handleNoProgress(
+	client: Minecraft,
+	level: Level,
+	player: net.minecraft.client.player.LocalPlayer,
+	goal: BlockPos,
+	dist2: Double,
+	move: Pair<Float, Float>
+): Boolean {
+	if (dist2 <= WAYPOINT_DISTANCE * WAYPOINT_DISTANCE) {
+		noProgressTicks = 0
+		lastProgressDist2 = dist2
+		return false
+	}
+	val movement = kotlin.math.abs(move.first) + kotlin.math.abs(move.second)
+	if (movement < 0.05f) {
+		noProgressTicks = 0
+		lastProgressDist2 = dist2
+		return false
+	}
+	if (lastProgressDist2.isNaN()) {
+		lastProgressDist2 = dist2
+		return false
+	}
+	if (dist2 + NO_PROGRESS_EPS < lastProgressDist2) {
+		lastProgressDist2 = dist2
+		noProgressTicks = 0
+		return false
+	}
+	noProgressTicks++
+	if (noProgressTicks < NO_PROGRESS_TICKS_LIMIT) {
+		return false
+	}
+	noProgressTicks = 0
+	lastProgressDist2 = dist2
+	if (debugRepathTick != 0L && level.gameTime - debugRepathTick < REPATH_INTERVAL_TICKS) {
+		forceDirectTicks = FORCE_DIRECT_TICKS
+		return false
+	}
+	DebugLog.status(client, "Path", "Stuck: no progress, repath.")
+	val changed = attemptRepath(client, level, player, "progress", goal, hard = false, allowSame = false)
+	if (!changed) {
+		forceDirectTicks = FORCE_DIRECT_TICKS
+	}
+	return changed
+}
+
 private fun updateLastPos(player: net.minecraft.client.player.LocalPlayer) {
 	lastPosX = player.x
 	lastPosY = player.y
@@ -1699,6 +2331,7 @@ private fun resetStuck() {
 	pauseTicks = 0
 	behindTicks = 0
 	lastDist2 = Double.NaN
+	resetProgress()
 	belowTicks = 0
 	smoothedTargetYaw = null
 	smoothedTargetPitch = null
@@ -1711,6 +2344,12 @@ private fun resetStuck() {
 	waterEscapeTarget = null
 	waterEscapeActive = false
 	lastNavMeshTick = 0L
+}
+
+private fun resetProgress() {
+	noProgressTicks = 0
+	lastProgressDist2 = Double.NaN
+	forceDirectTicks = 0
 }
 
 	private fun approach(current: Float, target: Float, accel: Float, decel: Float): Float {
@@ -1770,6 +2409,9 @@ private fun resetStuck() {
 		if (repathStart == null) {
 			DebugLog.status(client, "Path", "Repath $reason: no valid start.")
 			if (hard) {
+				if (attemptEtherwarp(client, level, player, finalGoal, "repath-start")) {
+					return true
+				}
 				DebugLog.status(client, "Path", "Failed: repath ($reason) found no valid start.")
 				stop(client, "Lost path.")
 				return true
@@ -1788,6 +2430,7 @@ private fun resetStuck() {
 			checkpoints = buildCheckpoints(path)
 			checkpointIndex = 0
 			smoothedTargetYaw = null
+			resetProgress()
 			if (reason.startsWith("stuck") || reason == "behind" || reason.startsWith("recover")) {
 				allowBackwardTicks = BACKWARD_ALLOW_TICKS
 			}
@@ -1801,6 +2444,9 @@ private fun resetStuck() {
 		}
 		DebugLog.status(client, "Path", "Repath $reason: no path.")
 		if (hard) {
+			if (attemptEtherwarp(client, level, player, finalGoal, "repath")) {
+				return true
+			}
 			DebugLog.status(client, "Path", "Failed: repath ($reason) found no path.")
 			stop(client, "Lost path.")
 			return true
@@ -1896,6 +2542,111 @@ private fun resetStuck() {
 	private fun setRepath(reason: String, level: Level) {
 		debugRepathReason = reason
 		debugRepathTick = level.gameTime
+	}
+
+	private fun continueRemotePath(
+		client: Minecraft,
+		level: Level,
+		player: net.minecraft.client.player.LocalPlayer
+	): Boolean {
+		val finalGoal = remoteGoal ?: return false
+		val resolved = MinecraftPathingRules.resolveTarget(level, finalGoal) ?: finalGoal
+		val profile = resolveProfile(currentProfileId)
+		val start = player.blockPosition()
+		val newPath = planPath(level, start, resolved, profile)
+		if (newPath.isNotEmpty()) {
+			target = resolved
+			remoteGoal = null
+			path = newPath.toMutableList()
+			pathIndex = 0
+			checkpoints = buildCheckpoints(path)
+			checkpointIndex = 0
+			resetProgress()
+			mainPath = path.toList()
+			mainPathIndex = 0
+			recoveryTargetIndex = -1
+			recovering = false
+			recoveryGoal = null
+			DebugLog.status(client, "Path", "Remote: connected to final target.")
+			return true
+		}
+		val progress = findRemoteProgressTarget(level, start, resolved)
+		if (progress != null) {
+			val progressPath = planPath(level, start, progress, profile)
+			if (progressPath.isNotEmpty()) {
+				target = progress
+				path = progressPath.toMutableList()
+				pathIndex = 0
+				checkpoints = buildCheckpoints(path)
+				checkpointIndex = 0
+				resetProgress()
+				mainPath = path.toList()
+				mainPathIndex = 0
+				recoveryTargetIndex = -1
+				recovering = false
+				recoveryGoal = null
+				DebugLog.status(
+					client,
+					"Path",
+					"Remote: stepping to ${progress.x} ${progress.y} ${progress.z}"
+				)
+				return true
+			}
+		}
+		DebugLog.status(client, "Path", "Remote: no progress target found.")
+		remoteGoal = null
+		return false
+	}
+
+	private fun findRemoteProgressTarget(level: Level, start: BlockPos, goal: BlockPos): BlockPos? {
+		val dx = (goal.x - start.x).toDouble()
+		val dz = (goal.z - start.z).toDouble()
+		val dist = kotlin.math.sqrt(dx * dx + dz * dz)
+		if (dist < REMOTE_STEP_MIN) {
+			return null
+		}
+		val dirX = dx / dist
+		val dirZ = dz / dist
+
+		val tryDistances = doubleArrayOf(
+			REMOTE_STEP_DISTANCE,
+			REMOTE_STEP_DISTANCE * 0.75,
+			REMOTE_STEP_DISTANCE * 0.5,
+			REMOTE_STEP_DISTANCE * 0.35,
+			REMOTE_STEP_MIN
+		)
+
+		for (step in tryDistances) {
+			val candX = start.x + (dirX * step)
+			val candZ = start.z + (dirZ * step)
+			val base = BlockPos(
+				kotlin.math.round(candX).toInt(),
+				start.y,
+				kotlin.math.round(candZ).toInt()
+			)
+			val candidate = findNearbyWalkable(level, base, REMOTE_STEP_SCAN_RADIUS, REMOTE_STEP_SCAN_VERTICAL) ?: continue
+			val chunkX = candidate.x shr 4
+			val chunkZ = candidate.z shr 4
+			if (!MinecraftPathingRules.isChunkCached(level, chunkX, chunkZ)) {
+				continue
+			}
+			if (candidate == start) continue
+			return candidate
+		}
+		return null
+	}
+
+	private fun findNearbyWalkable(level: Level, origin: BlockPos, radius: Int, vertical: Int): BlockPos? {
+		for (dy in -vertical..vertical) {
+			for (dx in -radius..radius) {
+				for (dz in -radius..radius) {
+					val pos = origin.offset(dx, dy, dz)
+					if (!MinecraftPathingRules.isWalkable(level, pos)) continue
+					return pos
+				}
+			}
+		}
+		return null
 	}
 
 }

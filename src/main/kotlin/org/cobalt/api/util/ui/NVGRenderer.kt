@@ -81,6 +81,8 @@ object NVGRenderer {
   private var scissor: Scissor? = null
   private var drawing: Boolean = false
   private var vg = -1L
+  private var prevFramebuffer = 0
+  private val prevViewport = IntArray(4)
 
   init {
     vg = nvgCreate(NVG_ANTIALIAS or NVG_STENCIL_STROKES)
@@ -90,6 +92,8 @@ object NVGRenderer {
   fun beginFrame(width: Float, height: Float) {
     check(!drawing) { "[NVGRenderer] Already drawing, but called beginFrame" }
 
+    prevFramebuffer = GL33C.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING)
+    GL33C.glGetIntegerv(GL33C.GL_VIEWPORT, prevViewport)
     val framebuffer = mc.mainRenderTarget
     val glFramebuffer = (framebuffer.colorTexture as GlTexture).getFbo(
       (RenderSystem.getDevice() as GlDevice).directStateAccess(),
@@ -121,7 +125,13 @@ object NVGRenderer {
       if (TextureTracker.prevBoundTexture != -1) GlStateManager._bindTexture(TextureTracker.prevBoundTexture)
     }
 
-    GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0)
+    GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, prevFramebuffer)
+    GlStateManager._viewport(
+      prevViewport[0],
+      prevViewport[1],
+      prevViewport[2],
+      prevViewport[3]
+    )
     drawing = false
   }
 
@@ -240,6 +250,28 @@ object NVGRenderer {
     nvgRoundedRect(vg, x, y, w, h, radius)
     nvgStrokeWidth(vg, thickness)
     gradient(color1, color2, x, y, w, h, gradient)
+    nvgStrokePaint(vg, nvgPaint)
+    nvgStroke(vg)
+  }
+
+  @JvmStatic
+  fun hollowGradientRectShifted(
+    x: Float,
+    y: Float,
+    w: Float,
+    h: Float,
+    thickness: Float,
+    color1: Int,
+    color2: Int,
+    gradient: Gradient,
+    radius: Float,
+    shiftX: Float,
+    shiftY: Float,
+  ) {
+    nvgBeginPath(vg)
+    nvgRoundedRect(vg, x, y, w, h, radius)
+    nvgStrokeWidth(vg, thickness)
+    gradient(color1, color2, x + shiftX, y + shiftY, w, h, gradient)
     nvgStrokePaint(vg, nvgPaint)
     nvgStroke(vg)
   }

@@ -12,14 +12,34 @@ import org.cobalt.api.pathfinder.provider.impl.MinecraftNavigationProvider
 object PathPlanProfiles {
 
   const val DEFAULT_ID = "default"
+  const val DEEP_ID = "deep"
 
   val DEFAULT: PathPlanProfile =
     PathPlanProfile(
       id = DEFAULT_ID,
-      maxIterations = 12000,
+      maxIterations = 45000,
       maxLength = 0,
       async = false,
       fallback = true,
+      providerFactory = { MinecraftNavigationProvider() },
+      neighborStrategy = MinecraftParkourNeighborStrategy,
+      heuristicWeights = HeuristicWeights(1.0, 0.0, 0.0, 0.5),
+      heuristicStrategy = LinearHeuristicStrategy(),
+      processorFactories = listOf(
+        { AvoidanceProcessor() },
+        { MinecraftParkourProcessor() },
+        { MinecraftPathProcessor() }
+      ),
+      pathfinderFactory = { config -> AStarPathfinder(config) }
+    )
+
+  val DEEP: PathPlanProfile =
+    PathPlanProfile(
+      id = DEEP_ID,
+      maxIterations = 120000,
+      maxLength = 0,
+      async = false,
+      fallback = false,
       providerFactory = { MinecraftNavigationProvider() },
       neighborStrategy = MinecraftParkourNeighborStrategy,
       heuristicWeights = HeuristicWeights(1.0, 0.0, 0.0, 0.5),

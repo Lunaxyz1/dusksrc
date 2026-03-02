@@ -52,6 +52,7 @@ internal class UIModuleList(
     .map {
       when (it) {
         is ActionSetting -> UIActionSetting(it)
+        is CommandHotkeySetting -> UICommandHotkeySetting(it)
         is CheckboxSetting -> UICheckboxSetting(it)
         is ColorSetting -> UIColorSetting(it)
         is InfoSetting -> UIInfoSetting(it)
@@ -198,11 +199,12 @@ internal class UIModuleList(
       }
       .map {
         when (it) {
-          is ActionSetting -> UIActionSetting(it)
-          is CheckboxSetting -> UICheckboxSetting(it)
-          is ColorSetting -> UIColorSetting(it)
-          is InfoSetting -> UIInfoSetting(it)
-          is KeyBindSetting -> UIKeyBindSetting(it)
+        is ActionSetting -> UIActionSetting(it)
+        is CommandHotkeySetting -> UICommandHotkeySetting(it)
+        is CheckboxSetting -> UICheckboxSetting(it)
+        is ColorSetting -> UIColorSetting(it)
+        is InfoSetting -> UIInfoSetting(it)
+        is KeyBindSetting -> UIKeyBindSetting(it)
           is ModeSetting -> UIModeSetting(it)
           is RangeSetting -> UIRangeSetting(it)
           is SliderSetting -> UISliderSetting(it)

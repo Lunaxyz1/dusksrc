@@ -70,7 +70,14 @@ class HudElementBuilder(
 
   /** Default render scale (clamped to 0.5-3.0 on load). */
   var scale: Float = 1.0f
+
+  /** Minimum allowed render scale for this HUD element. */
+  var minScale: Float = 0.5f
+
+  /** Maximum allowed render scale for this HUD element. */
+  var maxScale: Float = 3.0f
   private var renderLambda: ((Float, Float, Float) -> Unit)? = null
+  private var postRenderLambda: ((Float, Float, Float) -> Unit)? = null
 
   private val settingsList = mutableListOf<Setting<*>>()
 
@@ -110,6 +117,11 @@ class HudElementBuilder(
     renderLambda = block
   }
 
+  /** Sets a post-render callback, called after NVG rendering completes. */
+  fun postRender(block: (screenX: Float, screenY: Float, scale: Float) -> Unit) {
+    postRenderLambda = block
+  }
+
   fun build(): HudElement {
     val capturedRender = renderLambda ?: { _, _, _ -> }
     val capturedWidth = widthProvider
@@ -119,12 +131,17 @@ class HudElementBuilder(
     val capturedOffsetX = offsetX
     val capturedOffsetY = offsetY
     val capturedScale = scale
+    val capturedMinScale = minScale
+    val capturedMaxScale = maxScale
+    val capturedPostRender = postRenderLambda
 
     return object : HudElement(id, name, description) {
       override val defaultAnchor = capturedAnchor
       override val defaultOffsetX = capturedOffsetX
       override val defaultOffsetY = capturedOffsetY
       override val defaultScale = capturedScale
+      override val minScale = capturedMinScale
+      override val maxScale = capturedMaxScale
 
       init {
         capturedSettings.forEach { addSetting(it) }
@@ -135,6 +152,9 @@ class HudElementBuilder(
       override fun getBaseHeight(): Float = capturedHeight()
       override fun render(screenX: Float, screenY: Float, scale: Float) {
         capturedRender(screenX, screenY, scale)
+      }
+      override fun renderPost(screenX: Float, screenY: Float, scale: Float) {
+        capturedPostRender?.invoke(screenX, screenY, scale)
       }
     }
   }
