@@ -28,88 +28,6 @@ import org.cobalt.api.module.setting.impl.TextSetting
 import org.cobalt.api.notification.NotificationManager
 import org.cobalt.api.util.getLoreLines
 
-private val MINING_BLOCK_HARDNESS = linkedMapOf(
-  "Custom" to null,
-  "Pure Coal" to 600.0,
-  "Pure Iron" to 600.0,
-  "Pure Gold" to 600.0,
-  "Pure Lapis" to 600.0,
-  "Pure Redstone" to 600.0,
-  "Pure Emerald" to 600.0,
-  "Pure Diamond" to 600.0,
-  "Pure Quartz" to 600.0,
-  "Mithril (Gray)" to 500.0,
-  "Mithril (Prismarine)" to 800.0,
-  "Mithril (Blue Wool)" to 1500.0,
-  "Titanium" to 2000.0,
-  "Ruby Gemstone" to 2300.0,
-  "Amber Gemstone" to 3000.0,
-  "Amethyst Gemstone" to 3000.0,
-  "Jade Gemstone" to 3000.0,
-  "Sapphire Gemstone" to 3000.0,
-  "Opal Gemstone" to 3000.0,
-  "Topaz Gemstone" to 3800.0,
-  "Jasper Gemstone" to 4800.0,
-  "Onyx Gemstone" to 5200.0,
-  "Aquamarine Gemstone" to 5200.0,
-  "Citrine Gemstone" to 5200.0,
-  "Peridot Gemstone" to 5200.0,
-  "Umber" to 5600.0,
-  "Tungsten" to 5600.0,
-  "Glacite" to 6000.0,
-  "Sulphur" to 500.0,
-)
-
-private val MINING_BLOCK_TYPES = MINING_BLOCK_HARDNESS.keys.toTypedArray()
-
-private val MINING_BLOCK_ID_TO_TYPE = mapOf(
-  "minecraft:coal_ore" to "Pure Coal",
-  "minecraft:deepslate_coal_ore" to "Pure Coal",
-  "minecraft:coal_block" to "Pure Coal",
-  "minecraft:iron_ore" to "Pure Iron",
-  "minecraft:deepslate_iron_ore" to "Pure Iron",
-  "minecraft:iron_block" to "Pure Iron",
-  "minecraft:gold_ore" to "Pure Gold",
-  "minecraft:deepslate_gold_ore" to "Pure Gold",
-  "minecraft:gold_block" to "Pure Gold",
-  "minecraft:lapis_ore" to "Pure Lapis",
-  "minecraft:deepslate_lapis_ore" to "Pure Lapis",
-  "minecraft:lapis_block" to "Pure Lapis",
-  "minecraft:redstone_ore" to "Pure Redstone",
-  "minecraft:deepslate_redstone_ore" to "Pure Redstone",
-  "minecraft:redstone_block" to "Pure Redstone",
-  "minecraft:emerald_ore" to "Pure Emerald",
-  "minecraft:deepslate_emerald_ore" to "Pure Emerald",
-  "minecraft:emerald_block" to "Pure Emerald",
-  "minecraft:diamond_ore" to "Pure Diamond",
-  "minecraft:deepslate_diamond_ore" to "Pure Diamond",
-  "minecraft:diamond_block" to "Pure Diamond",
-  "minecraft:nether_quartz_ore" to "Pure Quartz",
-  "minecraft:quartz_block" to "Pure Quartz",
-  "minecraft:stone" to "Mithril (Gray)",
-  "minecraft:gray_wool" to "Mithril (Gray)",
-  "minecraft:prismarine" to "Mithril (Prismarine)",
-  "minecraft:blue_wool" to "Mithril (Blue Wool)",
-  "minecraft:light_gray_wool" to "Titanium",
-  "minecraft:red_stained_glass" to "Ruby Gemstone",
-  "minecraft:orange_stained_glass" to "Amber Gemstone",
-  "minecraft:purple_stained_glass" to "Amethyst Gemstone",
-  "minecraft:green_stained_glass" to "Jade Gemstone",
-  "minecraft:light_blue_stained_glass" to "Sapphire Gemstone",
-  "minecraft:white_stained_glass" to "Opal Gemstone",
-  "minecraft:yellow_stained_glass" to "Topaz Gemstone",
-  "minecraft:pink_stained_glass" to "Jasper Gemstone",
-  "minecraft:black_stained_glass" to "Onyx Gemstone",
-  "minecraft:cyan_stained_glass" to "Aquamarine Gemstone",
-  "minecraft:lime_stained_glass" to "Peridot Gemstone",
-  "minecraft:light_gray_stained_glass" to "Citrine Gemstone",
-  "minecraft:packed_ice" to "Glacite",
-  "minecraft:blue_ice" to "Glacite",
-  "minecraft:brown_wool" to "Umber",
-  "minecraft:yellow_wool" to "Sulphur",
-  "minecraft:light_gray_terracotta" to "Tungsten",
-)
-
 object MiningModule : Module("Mining") {
 
   private val mc: Minecraft = Minecraft.getInstance()
@@ -138,7 +56,7 @@ object MiningModule : Module("Mining") {
     "Block Type",
     "Select a known block hardness to calculate ticks.",
     0,
-    MINING_BLOCK_TYPES
+    MiningBlockRegistry.BLOCK_TYPES
   )
 
   val autoDetectBlock = CheckboxSetting(
@@ -656,7 +574,7 @@ object MiningModule : Module("Mining") {
     }
     val state = level.getBlockState(hit.blockPos)
     val id = BuiltInRegistries.BLOCK.getKey(state.block).toString()
-    val label = MINING_BLOCK_ID_TO_TYPE[id]
+    val label = MiningBlockRegistry.BLOCK_ID_TO_TYPE[id]
     if (label != null) {
       detectedBlockText.value = label
       setBlockType(label)
@@ -674,7 +592,7 @@ object MiningModule : Module("Mining") {
 
   private fun resolveBlockStrength(): Double {
     val selected = blockType.options.getOrNull(blockType.value) ?: "Custom"
-    val hardness = MINING_BLOCK_HARDNESS[selected]
+    val hardness = MiningBlockRegistry.BLOCK_HARDNESS[selected]
     return hardness ?: blockStrength.value
   }
 

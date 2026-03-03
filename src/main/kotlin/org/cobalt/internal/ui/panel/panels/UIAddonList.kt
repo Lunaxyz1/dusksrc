@@ -10,6 +10,7 @@ import org.cobalt.internal.loader.AddonLoader
 import org.cobalt.internal.mining.MiningModule
 import org.cobalt.internal.mining.FairyModule
 import org.cobalt.internal.mining.RoutesModule
+import org.cobalt.internal.mining.MiningMacroModule
 import org.cobalt.internal.combat.CombatMacroModule
 import org.cobalt.internal.ui.UIComponent
 import org.cobalt.internal.ui.components.UIAddonEntry
@@ -90,9 +91,11 @@ internal class UIAddonList : UIPanel(
     val miningModules =
       builtinModules.filter {
         it == MiningModule ||
+          it == MiningMacroModule ||
           it == FairyModule ||
           it == RoutesModule ||
           it.name.equals("Mining", ignoreCase = true) ||
+          it.name.equals("Mining Macro", ignoreCase = true) ||
           it.name.equals("Fairy", ignoreCase = true) ||
           it.name.equals("Routes", ignoreCase = true)
       }

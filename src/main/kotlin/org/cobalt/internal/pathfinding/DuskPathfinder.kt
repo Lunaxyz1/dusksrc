@@ -26,6 +26,7 @@ import org.cobalt.api.pathfinder.pathing.result.PathState
 import org.cobalt.api.pathfinder.pathing.processing.impl.AvoidanceCache
 import org.cobalt.api.pathfinder.wrapper.PathPosition
 import org.cobalt.api.util.ChatUtils
+import org.cobalt.api.util.player.MovementManager
 import org.cobalt.internal.etherwarp.EtherwarpLogic
 
 object DuskPathfinder {
@@ -50,6 +51,7 @@ private const val DEBUG_CHAT = false
 private const val DEBUG_TICK_CHAT = false
 private const val DEBUG_TICK_FILE = false
 private const val DEBUG_LOG_INTERVAL_TICKS = 20
+private const val OVERLAY_UPDATE_INTERVAL_TICKS = 2
 private const val STRAFE_DEADZONE = 0.15f
 private const val ROTATE_ONLY_YAW_DEGREES = 100.0
 private const val ROTATE_TARGET_RESPONSE = 8.0
@@ -85,11 +87,11 @@ private const val BELOW_TICKS_LIMIT = 20
 private const val NEARBY_REPATH_RADIUS = 2
 private const val BLOCKED_REPATH_COOLDOWN_TICKS = 20
 private const val BLOCKED_REPATH_FAIL_LIMIT = 2
-private const val JUMP_HOLD_TICKS = 3
-private const val JUMP_COOLDOWN_TICKS = 4
-private const val EARLY_JUMP_DISTANCE = 3.2
-private const val STEPUP_JUMP_DISTANCE = 1.4
-private const val CLIMB_JUMP_DISTANCE = 2.2
+private const val JUMP_HOLD_TICKS = 4
+private const val JUMP_COOLDOWN_TICKS = 2
+private const val EARLY_JUMP_DISTANCE = 3.8
+private const val STEPUP_JUMP_DISTANCE = 1.8
+private const val CLIMB_JUMP_DISTANCE = 2.6
 private const val WALL_AVOID_STRAFE = 0.75f
 private const val WALL_AVOID_FORWARD = 0.3f
 private const val PATH_CACHE_TTL_TICKS = 60
@@ -111,6 +113,8 @@ private const val REMOTE_STEP_DISTANCE = 32.0
 private const val REMOTE_STEP_MIN = 10.0
 private const val REMOTE_STEP_SCAN_RADIUS = 6
 private const val REMOTE_STEP_SCAN_VERTICAL = 3
+private const val ROLLING_PATH_NODE_AHEAD = 5
+private const val ROLLING_SEGMENT_DISTANCE = 24.0
 
 private var target: BlockPos? = null
 private var path: MutableList<BlockPos> = mutableListOf()
@@ -187,6 +191,8 @@ private var etherwarpAutoSlot = -1
 private var etherwarpAutoActive = false
 private val rng = kotlin.random.Random.Default
 private var remoteGoal: BlockPos? = null
+private var inputBoolFields: Map<String, Field> = emptyMap()
+private var inputFloatFields: Map<String, Field> = emptyMap()
 
 private val logger = LogManager.getLogger("dutt-client")
 
@@ -258,44 +264,15 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 
 	val profile = resolveProfile(profileId)
 	currentProfileId = profile.id
-	val newPath = planPath(level, start, resolvedTarget, profile)
+	val newPath = planRollingPath(level, start, resolvedTarget, profile)
 	if (newPath.isEmpty()) {
-		val progress = findRemoteProgressTarget(level, start, resolvedTarget)
-		if (progress != null) {
-			val progressPath = planPath(level, start, progress, profile)
-			if (progressPath.isNotEmpty()) {
-				DebugLog.startSession(client, "Path")
-				target = progress
-				remoteGoal = resolvedTarget
-				path = progressPath.toMutableList()
-				pathIndex = 0
-				checkpoints = buildCheckpoints(path)
-				checkpointIndex = 0
-				active = true
-				mainPath = path.toList()
-				mainPathIndex = 0
-				recoveryTargetIndex = -1
-				recovering = false
-				recoveryGoal = null
-				resetStuck()
-				etherwarpAutoSlot = -1
-				etherwarpAutoActive = false
-				OverlayRenderEngine.setEnabled(true)
-				notify(client, "Pathing toward ${resolvedTarget.x} ${resolvedTarget.y} ${resolvedTarget.z}.")
-				DebugLog.status(
-					client,
-					"Path",
-					"Started remote -> ${resolvedTarget.x} ${resolvedTarget.y} ${resolvedTarget.z} via ${progress.x} ${progress.y} ${progress.z}"
-				)
-				return true
-			}
-		}
 		notify(client, "No path found.")
 		DebugLog.status(client, "Path", "Failed: no path found.")
 		return false
 	}
 	DebugLog.startSession(client, "Path")
 	target = resolvedTarget
+	remoteGoal = null
 	path = newPath.toMutableList()
 	pathIndex = 0
 	checkpoints = buildCheckpoints(path)
@@ -314,7 +291,7 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 	DebugLog.status(
 		client,
 		"Path",
-		"Started -> ${resolvedTarget.x} ${resolvedTarget.y} ${resolvedTarget.z} from ${start.x} ${start.y} ${start.z}"
+		"Started -> ${resolvedTarget.x} ${resolvedTarget.y} ${resolvedTarget.z} from ${start.x} ${start.y} ${start.z} (segment nodes=${path.size})"
 	)
 	return true
 }
@@ -340,6 +317,9 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 	restoreEtherwarpHotbar(client)
 	resetInput(client)
 	remoteGoal = null
+		MovementManager.clearForcedMovement()
+		MovementManager.setMovementLock(false)
+		MovementManager.setLookLock(false)
 		val finalReason = reason ?: "Stopped."
 		val endPos = client.player?.blockPosition()
 		val endText = if (endPos != null) " at ${endPos.x} ${endPos.y} ${endPos.z}" else ""
@@ -360,13 +340,15 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		if (forceDirectTicks > 0) {
 			forceDirectTicks--
 		}
-		DebugLog.debugTickFile(
-			client,
-			"Path",
-			"pos:${"%.2f".format(player.x)},${"%.2f".format(player.y)},${"%.2f".format(player.z)} " +
-				"blk:${player.blockX},${player.blockY},${player.blockZ}",
-			level.gameTime
-		)
+		if (DEBUG_TICK_FILE) {
+			DebugLog.debugTickFile(
+				client,
+				"Path",
+				"pos:${"%.2f".format(player.x)},${"%.2f".format(player.y)},${"%.2f".format(player.z)} " +
+					"blk:${player.blockX},${player.blockY},${player.blockZ}",
+				level.gameTime
+			)
+		}
 		if (allowBackwardTicks > 0) {
 			allowBackwardTicks--
 		}
@@ -390,10 +372,6 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		updateLastPos(player)
 		return
 	}
-	if (handleNavMeshRecovery(client, level, player, currentTarget, false)) {
-		updateLastPos(player)
-		return
-	}
 	if (recovering) {
 		val recoveryTarget = recoveryGoal
 		if (recoveryTarget != null) {
@@ -406,11 +384,13 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		}
 	}
 	val nowTick = level.gameTime
-	try {
-		PathOverlayRenderer.updateOverlays(level, player, checkpoints, checkpointIndex, active, PATH_TAG)
-	} catch (_: Exception) {
-		OverlayRenderEngine.setEnabled(false)
-	}
+		try {
+			if (nowTick % OVERLAY_UPDATE_INTERVAL_TICKS == 0L) {
+				PathOverlayRenderer.updateOverlays(level, player, checkpoints, checkpointIndex, active, PATH_TAG)
+			}
+		} catch (_: Exception) {
+			OverlayRenderEngine.setEnabled(false)
+		}
 
 	if (pathIndex >= path.size) {
 		val finalTarget = target
@@ -443,7 +423,14 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 
 		val finalTarget = target
 		val waypoint =
-			if (!recovering && finalTarget != null && pathIndex >= path.size - 1 && MinecraftPathingRules.isWalkable(level, finalTarget)) {
+			if (
+				!recovering &&
+				finalTarget != null &&
+				pathIndex >= path.size - 1 &&
+				path.isNotEmpty() &&
+				path.last() == finalTarget &&
+				MinecraftPathingRules.isWalkable(level, finalTarget)
+			) {
 				finalTarget
 			} else {
 				path[pathIndex]
@@ -468,7 +455,7 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 				return
 			}
 		}
-		resolveMoveTarget(player, waypoint, currentTarget)?.let { moveTarget ->
+		resolveMoveTarget(level, player, waypoint, currentTarget)?.let { moveTarget ->
 			targetX = moveTarget.x + 0.5
 			targetY = moveTarget.y + 0.5
 			targetZ = moveTarget.z + 0.5
@@ -537,6 +524,15 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 				updateLastPos(player)
 				return
 			}
+			if (finalTarget != null && !isAtTarget(player, finalTarget, FINAL_ARRIVE_DISTANCE)) {
+				attemptRepath(client, level, player, "resume", finalTarget, hard = true)
+				updateLastPos(player)
+				return
+			}
+			if (remoteGoal != null && continueRemotePath(client, level, player)) {
+				updateLastPos(player)
+				return
+			}
 			stop(client, "Arrived.")
 		}
 		if (!recovering) {
@@ -591,7 +587,12 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 			val targetYaw = (atan2(-dx, dz) * (180.0 / Math.PI)).toFloat()
 			smoothRotate(player, targetYaw)
 		}
+		val isFinalNode = !recovering && pathIndex >= path.lastIndex
+		val finalHold = isFinalNode && waypointDist2 <= FINAL_ARRIVE_DISTANCE * FINAL_ARRIVE_DISTANCE
 		var move = computeMoveInput(player.yRot.toDouble(), dx, dz)
+		if (finalHold) {
+			move = 0f to max(move.second, 0f)
+		}
 		if (dy < 0 && waypointDist2 < 1.2 && player.onGround()) {
 			val nudgedForward = max(move.second, 0.65f)
 			val nudgedStrafe = if (kotlin.math.abs(move.first) > 0.3f) move.first * 0.4f else move.first
@@ -601,7 +602,7 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 			jumpCooldownTicks--
 		}
 		val jumpRequest = shouldJump(level, player, waypointDx, waypointDz, dy, waypoint)
-		if (!jumpRequest) {
+		if (!jumpRequest && !finalHold) {
 			move = avoidWall(level, player, dx, dz, move.first, move.second)
 		}
 		val climbJump =
@@ -700,6 +701,7 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		etherwarpRepathTick = 0L
 		lastNavMeshTick = 0L
 		applyMovement(client, player.input, 0f, 0f, false, false, false)
+		MovementManager.clearForcedMovement()
 	}
 
 	private fun planPath(level: Level, start: BlockPos, goal: BlockPos, profile: PathPlanProfile): List<BlockPos> {
@@ -743,6 +745,30 @@ fun start(client: Minecraft, rawTarget: BlockPos, profileId: String): Boolean {
 		val simplified = simplifyPath(nodes)
 		pathCache[cacheKey] = PathCacheEntry(simplified, level.gameTime)
 		return simplified
+	}
+
+	private fun planRollingPath(level: Level, start: BlockPos, goal: BlockPos, profile: PathPlanProfile): List<BlockPos> {
+		val distSq = start.distSqr(goal).toDouble()
+		val far = distSq > ROLLING_SEGMENT_DISTANCE * ROLLING_SEGMENT_DISTANCE
+		val planningGoal =
+			if (far) {
+				findRemoteProgressTarget(level, start, goal) ?: goal
+			} else {
+				goal
+			}
+		val planned = planPath(level, start, planningGoal, profile)
+		if (planned.isEmpty()) {
+			return emptyList()
+		}
+		return trimRollingNodes(planned)
+	}
+
+	private fun trimRollingNodes(nodes: List<BlockPos>): List<BlockPos> {
+		val maxNodes = max(2, ROLLING_PATH_NODE_AHEAD + 1)
+		if (nodes.size <= maxNodes) {
+			return nodes
+		}
+		return nodes.take(maxNodes)
 	}
 
 	private fun simplifyPath(nodes: List<BlockPos>): List<BlockPos> {
@@ -852,7 +878,12 @@ private fun checkFinalArrival(client: Minecraft, player: net.minecraft.client.pl
 			return true
 		}
 	}
-	if (path.isNotEmpty() && pathIndex >= path.lastIndex) {
+	if (
+		path.isNotEmpty() &&
+		pathIndex >= path.lastIndex &&
+		finalTarget != null &&
+		path.last() == finalTarget
+	) {
 		val last = path.last()
 		if (isAtTarget(player, last, CHECKPOINT_REACHED_DISTANCE)) {
 			return true
@@ -1008,7 +1039,19 @@ private fun checkPassedCheckpointRepath(
 		} catch (_: Exception) {
 			// ignore - if reflection fails, input will be keyPresses only
 		}
+		if (keyPressesField == null && moveVectorField == null) {
+			applyInputFallback(input, useStrafe, useForward, forwardPressed, backwardPressed, leftPressed, rightPressed, jump, shift, sprint)
+		}
 		val options = client.options
+		MovementManager.setForcedMovement(
+			forwardPressed,
+			backwardPressed,
+			leftPressed,
+			rightPressed,
+			jump,
+			shift,
+			sprint
+		)
 		options.keyUp.setDown(forwardPressed)
 		options.keyDown.setDown(backwardPressed)
 		options.keyLeft.setDown(leftPressed)
@@ -1115,6 +1158,7 @@ private fun isJumpEdge(level: Level, pos: BlockPos, dir: Direction, waypoint: Bl
 	}
 
 	private fun resolveMoveTarget(
+		level: Level,
 		player: net.minecraft.client.player.LocalPlayer,
 		waypoint: BlockPos,
 		fallback: BlockPos?
@@ -1128,6 +1172,7 @@ private fun isJumpEdge(level: Level, pos: BlockPos, dir: Direction, waypoint: Bl
 			return null
 		}
 		val playerPos = player.blockPosition()
+		findLedgeTarget(level, playerPos, waypoint)?.let { return it }
 		if (path.isNotEmpty()) {
 			val maxIndex = minOf(pathIndex + 6, path.lastIndex)
 			for (i in (pathIndex + 1)..maxIndex) {
@@ -1141,6 +1186,57 @@ private fun isJumpEdge(level: Level, pos: BlockPos, dir: Direction, waypoint: Bl
 			return fallback
 		}
 		return null
+	}
+
+	private fun findLedgeTarget(level: Level, origin: BlockPos, waypoint: BlockPos): BlockPos? {
+		val radius = 2
+		var best: BlockPos? = null
+		var bestScore = Double.POSITIVE_INFINITY
+		for (dz in -radius..radius) {
+			for (dx in -radius..radius) {
+				if (dx == 0 && dz == 0) continue
+				val pos = origin.offset(dx, 0, dz)
+				if (!MinecraftPathingRules.isWalkable(level, pos)) continue
+				if (isInWater(level, pos) || isInWater(level, pos.above())) continue
+				val preferred = preferredDropDir(pos, waypoint)
+				val candidates =
+					if (preferred == null) {
+						listOf(Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST)
+					} else {
+						listOf(preferred)
+					}
+				for (dir in candidates) {
+					if (!isDropEdge(level, pos, dir)) continue
+					val score = pos.distSqr(waypoint).toDouble() + pos.distSqr(origin).toDouble() * 0.2
+					if (score < bestScore) {
+						bestScore = score
+						best = pos
+					}
+				}
+			}
+		}
+		return best
+	}
+
+	private fun preferredDropDir(from: BlockPos, target: BlockPos): Direction? {
+		val dx = target.x - from.x
+		val dz = target.z - from.z
+		if (kotlin.math.abs(dx) < 1 && kotlin.math.abs(dz) < 1) {
+			return null
+		}
+		return if (kotlin.math.abs(dx) >= kotlin.math.abs(dz)) {
+			if (dx >= 0) Direction.EAST else Direction.WEST
+		} else {
+			if (dz >= 0) Direction.SOUTH else Direction.NORTH
+		}
+	}
+
+	private fun isDropEdge(level: Level, pos: BlockPos, dir: Direction): Boolean {
+		val step = pos.relative(dir)
+		if (!MinecraftPathingRules.isPassable(level, step) || !MinecraftPathingRules.isPassable(level, step.above())) {
+			return false
+		}
+		return !MinecraftPathingRules.isStandable(level, step.below())
 	}
 
 	private fun avoidWall(
@@ -1219,8 +1315,59 @@ private fun isJumpEdge(level: Level, pos: BlockPos, dir: Direction, waypoint: Bl
 		val cls = input.javaClass
 		if (cls == inputClass) return
 		inputClass = cls
-		keyPressesField = cls.declaredFields.firstOrNull { it.name == "keyPresses" }?.apply { isAccessible = true }
-		moveVectorField = cls.declaredFields.firstOrNull { it.name == "moveVector" }?.apply { isAccessible = true }
+		keyPressesField =
+			cls.declaredFields.firstOrNull { it.name == "keyPresses" }?.apply { isAccessible = true }
+				?: cls.declaredFields.firstOrNull { Input::class.java.isAssignableFrom(it.type) }?.apply { isAccessible = true }
+		moveVectorField =
+			cls.declaredFields.firstOrNull { it.name == "moveVector" }?.apply { isAccessible = true }
+				?: cls.declaredFields.firstOrNull { Vec2::class.java.isAssignableFrom(it.type) }?.apply { isAccessible = true }
+
+		inputBoolFields = cls.declaredFields.filter { it.type == java.lang.Boolean.TYPE }.associate {
+			it.isAccessible = true
+			it.name.lowercase() to it
+		}
+		inputFloatFields = cls.declaredFields.filter { it.type == java.lang.Float.TYPE }.associate {
+			it.isAccessible = true
+			it.name.lowercase() to it
+		}
+	}
+
+	private fun applyInputFallback(
+		input: Any,
+		strafe: Float,
+		forward: Float,
+		forwardPressed: Boolean,
+		backwardPressed: Boolean,
+		leftPressed: Boolean,
+		rightPressed: Boolean,
+		jump: Boolean,
+		shift: Boolean,
+		sprint: Boolean
+	) {
+		fun setBool(nameContains: List<String>, value: Boolean) {
+			inputBoolFields.entries.firstOrNull { (name, _) ->
+				nameContains.any { name.contains(it) }
+			}?.value?.set(input, value)
+		}
+
+		fun setFloat(nameContains: List<String>, value: Float) {
+			inputFloatFields.entries.firstOrNull { (name, _) ->
+				nameContains.any { name.contains(it) }
+			}?.value?.set(input, value)
+		}
+
+		setBool(listOf("forward", "up"), forwardPressed)
+		setBool(listOf("back", "down"), backwardPressed)
+		setBool(listOf("left"), leftPressed)
+		setBool(listOf("right"), rightPressed)
+		setBool(listOf("jump"), jump)
+		setBool(listOf("shift", "sneak"), shift)
+		setBool(listOf("sprint"), sprint)
+
+		setFloat(listOf("forward", "impulse"), forward)
+		setFloat(listOf("forward", "movement"), forward)
+		setFloat(listOf("left", "impulse"), strafe)
+		setFloat(listOf("strafe"), strafe)
 	}
 
 private fun handleStuck(
@@ -1278,6 +1425,10 @@ private fun handleStuck(
 			}
 		}
 		val hint = currentCheckpoint() ?: finalTarget ?: waypoint
+		if (handleNavMeshRecovery(client, level, player, hint, true)) {
+			stuckTicks = 0
+			return true
+		}
 		if (attemptRecoveryPath(client, level, player, hint)) {
 			stuckTicks = 0
 			return true
@@ -1552,9 +1703,6 @@ private fun handleBelowRecovery(
 		return false
 	}
 	belowTicks = 0
-	if (handleNavMeshRecovery(client, level, player, hint, true)) {
-		return true
-	}
 	DebugLog.status(
 		client,
 		"Path",
@@ -1571,6 +1719,9 @@ private fun handleNavMeshRecovery(
 	force: Boolean
 ): Boolean {
 	if (recovering || waterEscapeActive) {
+		return false
+	}
+	if (stuckTicks <= STUCK_TICKS_LIMIT) {
 		return false
 	}
 	if (isAtTarget(player, hintTarget, FINAL_ARRIVE_DISTANCE)) {
@@ -2418,7 +2569,7 @@ private fun resetProgress() {
 			}
 			return false
 		}
-		val newPath = planPath(level, repathStart, finalGoal, resolveProfile(currentProfileId))
+		val newPath = planRollingPath(level, repathStart, finalGoal, resolveProfile(currentProfileId))
 		if (newPath.isNotEmpty()) {
 			val changed = !isSamePath(newPath)
 			if (!changed && !allowSame) {
@@ -2553,7 +2704,7 @@ private fun resetProgress() {
 		val resolved = MinecraftPathingRules.resolveTarget(level, finalGoal) ?: finalGoal
 		val profile = resolveProfile(currentProfileId)
 		val start = player.blockPosition()
-		val newPath = planPath(level, start, resolved, profile)
+		val newPath = planRollingPath(level, start, resolved, profile)
 		if (newPath.isNotEmpty()) {
 			target = resolved
 			remoteGoal = null
@@ -2569,29 +2720,6 @@ private fun resetProgress() {
 			recoveryGoal = null
 			DebugLog.status(client, "Path", "Remote: connected to final target.")
 			return true
-		}
-		val progress = findRemoteProgressTarget(level, start, resolved)
-		if (progress != null) {
-			val progressPath = planPath(level, start, progress, profile)
-			if (progressPath.isNotEmpty()) {
-				target = progress
-				path = progressPath.toMutableList()
-				pathIndex = 0
-				checkpoints = buildCheckpoints(path)
-				checkpointIndex = 0
-				resetProgress()
-				mainPath = path.toList()
-				mainPathIndex = 0
-				recoveryTargetIndex = -1
-				recovering = false
-				recoveryGoal = null
-				DebugLog.status(
-					client,
-					"Path",
-					"Remote: stepping to ${progress.x} ${progress.y} ${progress.z}"
-				)
-				return true
-			}
 		}
 		DebugLog.status(client, "Path", "Remote: no progress target found.")
 		remoteGoal = null

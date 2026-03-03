@@ -411,6 +411,9 @@ object EtherwarpLogic {
     if (result.startsWith("warped ")) {
       result = result.removePrefix("warped ").trim()
     }
+    if (result.startsWith("heroic ")) {
+      result = result.removePrefix("heroic ").trim()
+    }
     return result
   }
 

@@ -50,6 +50,15 @@ internal class UIModule(
         0xFF3FE6FF.toInt(),
         Gradient.LeftToRight
       )
+    } else if (module.name.equals("Full Bright", ignoreCase = true)) {
+      val textX = x + 20F + xOffset
+      val textY = y + height / 2F - 6.5F
+      val glowColor = 0x80FFF0A0.toInt()
+      NVGRenderer.text(module.name, textX - 1f, textY, 13F, glowColor)
+      NVGRenderer.text(module.name, textX + 1f, textY, 13F, glowColor)
+      NVGRenderer.text(module.name, textX, textY - 1f, 13F, glowColor)
+      NVGRenderer.text(module.name, textX, textY + 1f, 13F, glowColor)
+      NVGRenderer.text(module.name, textX, textY, 13F, 0xFFFFF4C2.toInt())
     } else {
       NVGRenderer.text(
         module.name, x + 20F + xOffset, y + height / 2F - 6.5F, 13F,

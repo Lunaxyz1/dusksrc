@@ -15,6 +15,7 @@ object DebugLog {
 	var tickChatInterval = 20
 	var debugFileName = "dutt-debug.txt"
 	var statusFileEnabled = true
+	var debugFileEnabled = false
 
 	private val lastChatTickByModule = HashMap<String, Long>()
 	private val sessionFileByModule = HashMap<String, File>()
@@ -22,7 +23,7 @@ object DebugLog {
 		.withZone(ZoneId.systemDefault())
 
 	fun status(client: Minecraft, module: String, message: String) {
-		if (statusFileEnabled) {
+		if (statusFileEnabled && debugFileEnabled) {
 			writeLine(client, module, message, null)
 		}
 		if (statusChatEnabled) {
@@ -47,10 +48,16 @@ object DebugLog {
 	}
 
 	fun debugTickFile(client: Minecraft, module: String, message: String, gameTime: Long) {
+		if (!debugFileEnabled) {
+			return
+		}
 		writeLine(client, module, message, gameTime)
 	}
 
 	fun startSession(client: Minecraft, module: String) {
+		if (!debugFileEnabled) {
+			return
+		}
 		val dir = client.gameDirectory ?: return
 		val stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault()).format(Instant.now())
 		val file = File(dir, "dutt-debug-$module-$stamp.txt")
@@ -59,6 +66,10 @@ object DebugLog {
 	}
 
 	fun endSession(client: Minecraft, module: String, message: String? = null) {
+		if (!debugFileEnabled) {
+			sessionFileByModule.remove(module)
+			return
+		}
 		if (message != null) {
 			writeLine(client, module, message, null)
 		}

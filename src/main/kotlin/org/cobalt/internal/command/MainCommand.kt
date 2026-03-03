@@ -81,4 +81,37 @@ internal object MainCommand : Command(name = "dutt", aliases = arrayOf("cobalt",
     NotificationManager.queue(title, description, 2000L)
   }
 
+  @SubCommand
+  fun entityscan() {
+    val mc = net.minecraft.client.Minecraft.getInstance()
+    val player = mc.player
+    val level = mc.level
+    if (player == null || level == null) {
+      org.cobalt.api.util.ChatUtils.sendMessage("No world loaded.")
+      return
+    }
+
+    val range = 5.0
+    val rangeSq = range * range
+    var count = 0
+
+    for (entity in level.entitiesForRendering()) {
+      if (entity == player) continue
+      val dx = entity.x - player.x
+      val dy = entity.y - player.y
+      val dz = entity.z - player.z
+      val distSq = dx * dx + dy * dy + dz * dz
+      if (distSq > rangeSq) continue
+      count++
+
+      val name = entity.name?.string ?: entity.type.descriptionId
+      org.cobalt.api.util.ChatUtils.sendMessage(
+        "[EntityScan] ${entity.type.descriptionId} \"$name\" @ " +
+          "${"%.1f".format(entity.x)}, ${"%.1f".format(entity.y)}, ${"%.1f".format(entity.z)}"
+      )
+    }
+
+    org.cobalt.api.util.ChatUtils.sendMessage("[EntityScan] Found $count entities within $range blocks.")
+  }
+
 }

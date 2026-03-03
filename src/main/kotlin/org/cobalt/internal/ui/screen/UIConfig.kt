@@ -115,8 +115,14 @@ internal object UIConfig : UIScreen() {
     super.onClose()
   }
 
-  fun swapBodyPanel(panel: UIPanel) {
+  fun swapBodyPanel(panel: UIPanel): UIPanel {
+    val previous = body
     this.body = panel
+    return previous
+  }
+
+  fun getBodyPanel(): UIPanel {
+    return body
   }
 
 }

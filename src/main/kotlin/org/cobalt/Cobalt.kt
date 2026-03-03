@@ -12,6 +12,7 @@ import org.cobalt.api.rotation.RotationExecutor
 import org.cobalt.api.util.TickScheduler
 import org.cobalt.internal.combat.CombatMacroModule
 import org.cobalt.internal.command.MainCommand
+import org.cobalt.internal.dungeons.DungeonsModule
 import org.cobalt.internal.etherwarp.EtherwarpHelperModule
 import org.cobalt.internal.etherwarp.LeftClickEtherwarpModule
 import org.cobalt.internal.helper.Config
@@ -19,9 +20,14 @@ import org.cobalt.internal.loader.AddonLoader
 import org.cobalt.internal.mining.MiningModule
 import org.cobalt.internal.mining.FairyModule
 import org.cobalt.internal.mining.RoutesModule
+import org.cobalt.internal.mining.MiningMacroModule
 import org.cobalt.internal.pathfinding.PathfindingModule
 import org.cobalt.internal.qol.QolModule
+import org.cobalt.internal.visual.BlockOverlayModule
 import org.cobalt.internal.visual.BlockOutlineModule
+import org.cobalt.internal.visual.DarkModeModule
+import org.cobalt.internal.visual.FullBrightModule
+import org.cobalt.internal.visual.OrbitFreecamModule
 
 @Suppress("UNUSED")
 object Cobalt : ClientModInitializer {
@@ -35,10 +41,16 @@ object Cobalt : ClientModInitializer {
         MiningModule,
         FairyModule,
         RoutesModule,
+        MiningMacroModule,
         CombatMacroModule,
+        DungeonsModule,
         EtherwarpHelperModule,
         LeftClickEtherwarpModule,
         PathfindingModule,
+        FullBrightModule,
+        DarkModeModule,
+        OrbitFreecamModule,
+        BlockOverlayModule,
         BlockOutlineModule,
         QolModule
       )

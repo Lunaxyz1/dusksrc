@@ -1,6 +1,6 @@
 package org.cobalt.internal.visual
 
-import kotlin.math.max
+import kotlin.math.cos
 import kotlin.math.roundToInt
 import net.minecraft.client.Minecraft
 import net.minecraft.world.phys.BlockHitResult
@@ -11,53 +11,38 @@ import org.cobalt.api.event.annotation.SubscribeEvent
 import org.cobalt.api.event.impl.render.WorldRenderEvent
 import org.cobalt.api.module.Module
 import org.cobalt.api.module.setting.impl.CheckboxSetting
-import kotlin.math.cos
 import org.cobalt.api.module.setting.impl.ColorSetting
 import org.cobalt.api.module.setting.impl.ModeSetting
 import org.cobalt.api.module.setting.impl.SliderSetting
 import org.cobalt.internal.pathfinding.OverlayRenderEngine
 
-object BlockOutlineModule : Module("Block Outline") {
+object BlockOverlayModule : Module("Block Overlay") {
 
-  private const val TAG = "block-outline"
+  private const val TAG = "block-overlay"
 
   private val enabled = CheckboxSetting(
     "Enabled",
-    "Show a custom outline on the targeted block.",
+    "Fill the targeted block with a translucent overlay.",
     false
   )
 
-  private val blurRadius = SliderSetting(
-    "Blur Radius",
-    "Outline thickness/blur (1-16).",
-    4.0,
-    1.0,
-    16.0
+  private val overlayColor = ColorSetting(
+    "Overlay Color",
+    "Block overlay color (RGBA).",
+    0xFFFFFFFF.toInt()
   )
 
-  private val threshold = SliderSetting(
-    "Threshold",
-    "Edge falloff (0 = soft, 1 = hard).",
-    0.3,
+  private val overlayOpacity = SliderSetting(
+    "Opacity",
+    "Fill opacity (0-100%).",
+    0.2,
     0.0,
     1.0
   )
 
-  private val outlineColor = ColorSetting(
-    "Outline Color",
-    "Block outline color (RGBA).",
-    0xFFFFFFFF.toInt()
-  )
-
-  private val outlineEnabled = CheckboxSetting(
-    "Outline",
-    "Render the outline around the block.",
-    true
-  )
-
   private val colorMode = ModeSetting(
     "Color Mode",
-    "Color mode for the outline.",
+    "Color mode for the overlay.",
     0,
     arrayOf("Static", "Rainbow", "Dutt")
   )
@@ -65,10 +50,8 @@ object BlockOutlineModule : Module("Block Outline") {
   init {
     addSetting(
       enabled,
-      blurRadius,
-      threshold,
-      outlineColor,
-      outlineEnabled,
+      overlayColor,
+      overlayOpacity,
       colorMode,
     )
     EventBus.register(this)
@@ -123,35 +106,22 @@ object BlockOutlineModule : Module("Block Outline") {
 
     val argb = resolveColor()
     val baseColor = toOverlayColor(argb)
-    val radius = blurRadius.value.toFloat().coerceIn(1f, 16f)
-    val minAlpha = (baseColor.a * threshold.value).roundToInt().coerceIn(0, 255)
-    if (!outlineEnabled.value) {
-      OverlayRenderEngine.render(event.context)
-      return
-    }
-
-    val passes = max(1, (radius / 3.5f).roundToInt())
-    val baseWidth = 1.2f
-    for (i in 0 until passes) {
-      val t = if (passes == 1) 0f else i.toFloat() / (passes - 1).toFloat()
-      val width = baseWidth + radius * (0.35f + 0.65f * t)
-      val alpha = (baseColor.a + (minAlpha - baseColor.a) * t).roundToInt().coerceIn(0, 255)
-      val color = baseColor.withAlpha(alpha)
-      OverlayRenderEngine.addBox(
-        level,
-        minX,
-        minY,
-        minZ,
-        maxX,
-        maxY,
-        maxZ,
-        null,
-        color,
-        width,
-        2,
-        TAG
-      )
-    }
+    val fillAlpha = (baseColor.a * overlayOpacity.value).roundToInt().coerceIn(0, 255)
+    val fillColor = baseColor.withAlpha(fillAlpha)
+    OverlayRenderEngine.addBox(
+      level,
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+      fillColor,
+      null,
+      1.0f,
+      2,
+      TAG
+    )
 
     OverlayRenderEngine.render(event.context)
   }
@@ -166,9 +136,9 @@ object BlockOutlineModule : Module("Block Outline") {
 
   private fun resolveColor(): Int {
     return when (colorMode.value) {
-      1 -> rainbowColor(outlineColor.value)
-      2 -> duttColor(outlineColor.value)
-      else -> outlineColor.value
+      1 -> rainbowColor(overlayColor.value)
+      2 -> duttColor(overlayColor.value)
+      else -> overlayColor.value
     }
   }
 

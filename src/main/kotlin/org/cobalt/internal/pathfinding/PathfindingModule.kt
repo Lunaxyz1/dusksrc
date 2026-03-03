@@ -20,6 +20,7 @@ import org.cobalt.api.module.setting.impl.TextSetting
 import org.cobalt.api.pathfinder.minecraft.MinecraftPathingRules
 import org.cobalt.api.ui.theme.ThemeManager
 import org.cobalt.api.util.ChatUtils
+import org.cobalt.api.util.player.MovementManager
 import org.cobalt.api.util.ui.NVGRenderer
 
 object PathfindingModule : Module("Pathfinding") {
@@ -69,6 +70,12 @@ object PathfindingModule : Module("Pathfinding") {
     "Cache Grid",
     "Show grid lines on the cache HUD.",
     true
+  )
+
+  private val debugFileLogging = CheckboxSetting(
+    "Debug File Logs",
+    "Write path/rotation debug logs to file.",
+    false
   )
 
   private val startAction = ActionSetting(
@@ -168,6 +175,7 @@ object PathfindingModule : Module("Pathfinding") {
       cacheHudRadius,
       cacheHudCellSize,
       cacheHudShowGrid,
+      debugFileLogging,
       startAction,
       stopAction,
     )
@@ -182,12 +190,18 @@ object PathfindingModule : Module("Pathfinding") {
 
   @SubscribeEvent
   fun onTick(@Suppress("UNUSED_PARAMETER") event: TickEvent.Start) {
+    org.cobalt.internal.pathfinding.DebugLog.debugFileEnabled = debugFileLogging.value
     if (!enabled.value) {
       if (DuskPathfinder.isActive()) {
         DuskPathfinder.stop(mc, "Pathfinding disabled.")
       }
+      MovementManager.setMovementLock(false)
+      MovementManager.setLookLock(false)
       return
     }
+    val active = DuskPathfinder.isActive()
+    MovementManager.setMovementLock(active)
+    MovementManager.setLookLock(active)
     DuskPathfinder.tick(mc)
   }
 
@@ -198,10 +212,15 @@ object PathfindingModule : Module("Pathfinding") {
     DuskPathfinder.render(event.context)
   }
 
+  fun ensureEnabledForAutomation(source: String) {
+    if (enabled.value) return
+    enabled.value = true
+    ChatUtils.sendMessage("Pathfinding auto-enabled for $source.")
+  }
+
   fun startFromSettings() {
     if (!enabled.value) {
-      ChatUtils.sendMessage("Pathfinding is disabled. Enable it in the GUI first.")
-      return
+      ensureEnabledForAutomation("pathfinding")
     }
 
     val x = parseCoordinate(targetX.value) ?: return invalidTarget("X", targetX.value)
@@ -219,8 +238,7 @@ object PathfindingModule : Module("Pathfinding") {
   fun startTo(x: Double, y: Double, z: Double) {
     setTarget(x, y, z, null)
     if (!enabled.value) {
-      ChatUtils.sendMessage("Target updated. Enable Pathfinding in the GUI to start.")
-      return
+      ensureEnabledForAutomation("pathfinding")
     }
     DuskPathfinder.start(mc, BlockPos.containing(x, y, z))
   }

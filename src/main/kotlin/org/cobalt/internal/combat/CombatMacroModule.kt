@@ -1,5 +1,6 @@
 package org.cobalt.internal.combat
 
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -20,7 +21,7 @@ import org.cobalt.api.module.setting.impl.InfoType
 import org.cobalt.api.module.setting.impl.SliderSetting
 import org.cobalt.api.module.setting.impl.TextSetting
 import org.cobalt.api.rotation.RotationExecutor
-import org.cobalt.api.rotation.strategy.TrackingRotationStrategy
+import org.cobalt.api.rotation.strategy.BezierTrackingRotationStrategy
 import org.cobalt.api.util.AngleUtils
 import org.cobalt.api.util.ChatUtils
 import org.cobalt.internal.pathfinding.DuskPathfinder
@@ -29,7 +30,7 @@ import org.cobalt.internal.pathfinding.PathfindingModule
 object CombatMacroModule : Module("Combat Macro") {
 
   private val mc: Minecraft = Minecraft.getInstance()
-  private val rotationStrategy = TrackingRotationStrategy(16f, 12f)
+  private val rotationStrategy = BezierTrackingRotationStrategy(16f, 12f)
 
   private val enabled = CheckboxSetting(
     "Enabled",
@@ -101,6 +102,24 @@ object CombatMacroModule : Module("Combat Macro") {
     true
   )
 
+  private val allowPlayerTargets = CheckboxSetting(
+    "Allow Player Targets",
+    "Include player-type entities that match the allowed names list.",
+    true
+  )
+
+  private val allowedPlayerNames = TextSetting(
+    "Allowed Player Names",
+    "Comma-separated display names to treat as mobs (e.g. Ice Walker).",
+    "Ice Walker, Goblin"
+  )
+
+  private val blacklistedNames = TextSetting(
+    "Blacklist Names",
+    "Comma-separated display names to ignore.",
+    "Blacksmith, CLICK, Toolsmith, Gimley, Hornum, Brynmor, Forge Foreman, Fred, [Lv25] ✰⛏ Knifethrower 786/800❤, Sargwyn, Tarwen, pdp2ut6lwf, 95j67t0hlr, u07nk5sfh6, 12r7qltkkd"
+  )
+
   private val aimTolerance = SliderSetting(
     "Aim Tolerance",
     "Max yaw/pitch error before attacking.",
@@ -115,7 +134,8 @@ object CombatMacroModule : Module("Combat Macro") {
   private var lastMoveZ = 0.0
   private var stuckTicks = 0
   private var nextAttackNs = 0L
-
+  private var startedPath = false
+  private var currentTargetId: UUID? = null
   init {
     addSetting(
       enabled,
@@ -128,6 +148,9 @@ object CombatMacroModule : Module("Combat Macro") {
       stuckTicksSetting,
       warpOnStuck,
       requireLos,
+      allowPlayerTargets,
+      allowedPlayerNames,
+      blacklistedNames,
       aimTolerance
     )
     EventBus.register(this)
@@ -136,21 +159,29 @@ object CombatMacroModule : Module("Combat Macro") {
   @SubscribeEvent
   fun onTick(@Suppress("UNUSED_PARAMETER") event: TickEvent.Start) {
     val player = mc.player ?: return
+    if (startedPath && !DuskPathfinder.isActive()) {
+      startedPath = false
+      lastTargetPos = null
+    }
     if (!enabled.value) {
       stopMacro()
       return
     }
+
+    val level = mc.level ?: return
+    PathfindingModule.ensureEnabledForAutomation("combat macro")
 
     if (player.isDeadOrDying || player.health <= 0f) {
       stopMacro()
       return
     }
 
-    val level = mc.level ?: return
-    val target = findTarget(player) ?: run {
-      if (DuskPathfinder.isActive()) {
+    val target = resolveTarget(player) ?: run {
+      if (startedPath && DuskPathfinder.isActive()) {
         DuskPathfinder.stop(mc, "No target found.")
       }
+      startedPath = false
+      lastTargetPos = null
       return
     }
 
@@ -164,50 +195,89 @@ object CombatMacroModule : Module("Combat Macro") {
     }
 
     if (inRange) {
-      if (DuskPathfinder.isActive()) {
+      if (startedPath && DuskPathfinder.isActive()) {
         DuskPathfinder.stop(mc, "Target in range.")
       }
+      startedPath = false
+      lastTargetPos = null
       attemptAttack(player, target)
     } else {
-      if (!PathfindingModule.enabled.value) {
-        DuskPathfinder.tick(mc)
-      }
       val targetPos = target.blockPosition()
       val last = lastTargetPos
       if (!DuskPathfinder.isActive() || last == null || last.distSqr(targetPos) > 4.0) {
-        DuskPathfinder.start(mc, targetPos)
-        lastTargetPos = targetPos
+        val started = DuskPathfinder.start(mc, targetPos)
+        if (started) {
+          lastTargetPos = targetPos
+          startedPath = true
+        } else {
+          startedPath = false
+          if (!DuskPathfinder.isActive()) {
+            lastTargetPos = null
+          }
+        }
       }
     }
 
     updateStuck(player, inRange)
   }
 
-  private fun findTarget(player: Player): LivingEntity? {
+  private fun resolveTarget(player: Player): LivingEntity? {
     val level = mc.level ?: return null
-    val searchRangeSq = searchRange.value * searchRange.value
     val filter = targetName.value.trim().lowercase()
+    val allowedPlayers =
+      allowedPlayerNames.value.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+    val blacklisted =
+      blacklistedNames.value.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
 
+    currentTargetId?.let { id ->
+      val current = level.entitiesForRendering().firstOrNull { it.uuid == id } as? LivingEntity
+      if (current != null && isValidTarget(current, player, allowedPlayers, blacklisted, filter, false)) {
+        return current
+      }
+      currentTargetId = null
+    }
+
+    val searchRangeSq = searchRange.value * searchRange.value
     var best: LivingEntity? = null
     var bestDist = Double.POSITIVE_INFINITY
     for (entity in level.entitiesForRendering()) {
       val living = entity as? LivingEntity ?: continue
-      if (living is ArmorStand) continue
-      if (living is Player) continue
-      if (living == player) continue
-      if (!living.isAlive) continue
+      if (!isValidTarget(living, player, allowedPlayers, blacklisted, filter, true)) continue
       val dx = living.x - player.x
       val dy = living.y - player.y
       val dz = living.z - player.z
       val distSq = dx * dx + dy * dy + dz * dz
       if (distSq > searchRangeSq) continue
-      if (filter.isNotEmpty() && !living.name.string.lowercase().contains(filter)) continue
       if (distSq < bestDist) {
         best = living
         bestDist = distSq
       }
     }
+    if (best != null) {
+      currentTargetId = best.uuid
+    }
     return best
+  }
+
+  private fun isValidTarget(
+    living: LivingEntity,
+    player: Player,
+    allowedPlayers: Set<String>,
+    blacklisted: Set<String>,
+    nameFilter: String,
+    requireRange: Boolean
+  ): Boolean {
+    if (living is ArmorStand) return false
+    if (living == player) return false
+    if (!living.isAlive) return false
+    val displayName = living.name.string.trim().lowercase()
+    if (blacklisted.contains(displayName)) return false
+    if (nameFilter.isNotEmpty() && !displayName.contains(nameFilter)) return false
+    if (living is Player) {
+      if (!allowPlayerTargets.value) return false
+      if (!allowedPlayers.contains(displayName)) return false
+    }
+    return true
   }
 
   private fun attemptAttack(player: Player, target: LivingEntity) {
@@ -278,12 +348,14 @@ object CombatMacroModule : Module("Combat Macro") {
   }
 
   private fun stopMacro() {
-    if (DuskPathfinder.isActive()) {
+    if (startedPath && DuskPathfinder.isActive()) {
       DuskPathfinder.stop(mc, "Combat macro stopped.")
     }
     RotationExecutor.stopRotating()
     lastTargetPos = null
     stuckTicks = 0
     nextAttackNs = 0L
+    startedPath = false
+    currentTargetId = null
   }
 }

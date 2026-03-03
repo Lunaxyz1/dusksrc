@@ -34,7 +34,7 @@ class InventoryHudModule : Module("Inventory HUD") {
   private val slotRadius = 5f
   private val borderThickness = 1.5f
   private val baseScale = 1.46f
-  private val itemNudgeX = 3.5f
+  private val itemNudgeX = 3f
   private val itemNudgeY = -0.1f
 
   private val outlineStart = 0xFF2DE2FF.toInt()
@@ -118,10 +118,8 @@ class InventoryHudModule : Module("Inventory HUD") {
     }
   }
 
-  init {
-    hudRef = inventoryHud
-    EventBus.register(this)
-  }
+  init { hudRef = inventoryHud
+    EventBus.register(this)}
 
   @SubscribeEvent
   fun onGuiRender(event: GuiRenderEvent) {
@@ -135,12 +133,17 @@ class InventoryHudModule : Module("Inventory HUD") {
     val (sx, sy) = hudRef.getScreenPosition(window.screenWidth.toFloat(), window.screenHeight.toFloat())
     val itemSize = 16f
     val itemOffset = (slotSize - itemSize) / 2f
-    val guiScaleX = window.screenWidth.toFloat() / window.guiScaledWidth.toFloat()
-    val guiScaleY = window.screenHeight.toFloat() / window.guiScaledHeight.toFloat()
+    val guiScaledW = window.guiScaledWidth.toFloat()
+    val guiScaledH = window.guiScaledHeight.toFloat()
+    if (guiScaledW <= 0f || guiScaledH <= 0f) return
+    val guiScaleX = window.screenWidth.toFloat() / guiScaledW
+    val guiScaleY = window.screenHeight.toFloat() / guiScaledH
+    if (!guiScaleX.isFinite() || !guiScaleY.isFinite()) return
     val originX = sx / guiScaleX
     val originY = sy / guiScaleY
     val hudScale = inventoryHud.scale
     val renderScale = (hudScale * baseScale) / guiScaleX
+    if (!renderScale.isFinite()) return
     val graphics = event.graphics
     val pose = getPoseStack(graphics)
     val posePushed = pose?.let { posePush(it) } == true
@@ -166,10 +169,11 @@ class InventoryHudModule : Module("Inventory HUD") {
 
       val slotX = padding + col * (slotSize + slotGap) + itemOffset + itemNudgeX
       val slotY = padding + row * (slotSize + slotGap) + itemOffset + itemNudgeY
-      val drawX =
-        (baseX + slotX * coordScale).roundToInt()
-      val drawY =
-        (baseY + slotY * coordScale).roundToInt()
+      val drawXF = baseX + slotX * coordScale
+      val drawYF = baseY + slotY * coordScale
+      if (!drawXF.isFinite() || !drawYF.isFinite()) continue
+      val drawX = drawXF.roundToInt()
+      val drawY = drawYF.roundToInt()
 
       graphics.renderItem(stack, drawX, drawY)
       graphics.renderItemDecorations(mc.font, stack, drawX, drawY)
